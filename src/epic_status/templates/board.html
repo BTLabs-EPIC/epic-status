@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{# `with context` is required: a Jinja macro does not see the template context
+   unless the import asks for it, and these macros use Kind, State, prober_id and
+   lag_note. Without it the page renders as a 500 rather than degrading. #}
+{% import "_row.html" as r with context %}
+{% set page = 'board' %}
+{% block title %}{{ headline }} — {{ site_name }}{% endblock %}
+
+{% block content %}
+{#
+  Answer first, then the list. The verdict and the four numbers are all derived from
+  the same probe responses that drive the lights, so the first screen costs no extra
+  request and still tells a reader who gets no further what they came for.
+#}
+<div class="verdict {{ verdict_class }}">
+  <span
+    class="dot dot-{{ 'healthy' if verdict_class == 'verdict-ok' else 'degraded' if verdict_class == 'verdict-warn' else 'down' if verdict_class == 'verdict-bad' else 'unknown' }}{% if verdict_class == 'verdict-ok' %} is-live{% endif %}"
+    aria-hidden="true"
+  ></span>
+  <span class="verdict-text">
+    <strong>{{ headline }}</strong>
+    <span>{{ subline }}</span>
+  </span>
+  {% if generated_at %}
+  <span class="verdict-meta">
+    <span data-field="generated" data-age="{{ generated_at | epoch_ms }}">{{ generated_at | relative }}</span><br />
+    checked every {{ cadence_s }}s
+  </span>
+  {% endif %}
+</div>
+
+{% if network %}
+<dl class="strip">
+  <div>
+    <dt>Chain tip</dt>
+    <dd data-field="tip">{{ network.tip_height | thousands }}</dd>
+    <small>
+      {% if network.tip_age_s is not none %}
+        last block {{ network.tip_age_s }}s ago
+      {% else %}
+        block age unknown
+      {% endif %}
+    </small>
+  </div>
+  <div>
+    <dt>Nodes at the tip</dt>
+    <dd data-field="nodes">{{ network.nodes_healthy }} / {{ network.nodes_total }}</dd>
+    <small>
+      {{ network.nodes_degraded }} degraded, {{ network.nodes_down }} offline
+    </small>
+  </div>
+  <div>
+    <dt>Epicbox reachable</dt>
+    <dd data-field="epicbox">{{ network.epicbox_healthy }} / {{ network.epicbox_total }}</dd>
+    <small>
+      {% if network.median_epicbox_latency_ms is not none %}
+        median {{ network.median_epicbox_latency_ms | ms }}
+      {% else %}
+        no relay answered
+      {% endif %}
+    </small>
+  </div>
+  <div>
+    <dt>Hosting</dt>
+    <dd>
+      {%- if network.providers -%}
+        {{ network.providers.values() | list | first }} / {{ network.nodes_total + network.epicbox_total }}
+      {%- else -%}—{%- endif -%}
+    </dd>
+    <small>
+      {% if network.providers %}
+        {# Concentration, not a flag count. Five of seven on one provider is the
+           finding; which countries they are in is decoration next to it. #}
+        on {{ network.providers.keys() | list | first }}{% if network.co_hosted %}, {{ network.co_hosted }} shared hosts{% endif %}
+      {% else %}
+        provider not yet known
+      {% endif %}
+    </small>
+  </div>
+</dl>
+{% endif %}
+
+<section class="group">
+  <div class="group-head">
+    <h2>Public nodes</h2>
+    <span class="group-count">
+      sorted by health, then latency{% if reader_region %} · you look like {{ reader_region }}{% endif %}
+    </span>
+  </div>
+  {% if nodes %}
+  {{ r.head(Kind.NODE) }}
+  <ul class="rows">
+    {% for status in nodes %}{{ r.row(status, Kind.NODE, network.tip_height if network else none) }}{% endfor %}
+  </ul>
+  {% else %}
+  <p class="prose">No nodes are being monitored yet.</p>
+  {% endif %}
+</section>
+
+<section class="group">
+  <div class="group-head">
+    <h2>Epicbox relays</h2>
+    <span class="group-count">checked every {{ epicbox_cadence_s }}s</span>
+  </div>
+  {% if relays %}
+  {{ r.head(Kind.EPICBOX) }}
+  <ul class="rows">
+    {% for status in relays %}{{ r.row(status, Kind.EPICBOX, none) }}{% endfor %}
+  </ul>
+  {% else %}
+  <p class="prose">No relays are being monitored yet.</p>
+  {% endif %}
+</section>
+
+{% if network and network.providers %}
+<section class="group">
+  <div class="group-head">
+    <h2>Where it all runs</h2>
+    <span class="group-count">registry records, not measurements</span>
+  </div>
+  <div class="card">
+    <p class="prose prose-tight">
+      {% for provider, count in network.providers.items() %}
+      <strong>{{ provider }}</strong> {{ count }}{% if not loop.last %} · {% endif %}
+      {% endfor %}
+      {% if network.countries %}
+      <br />Countries: {% for c in network.countries %}{{ c | flag }} {{ c }}{% if not loop.last %} · {% endif %}{% endfor %}
+      {% endif %}
+    </p>
+    {% if network.providers.values() | list | first > (network.nodes_total + network.epicbox_total) / 2 %}
+    <p class="prose">
+      More than half of everything listed is on one hosting provider. That is a single
+      correlated failure for the network, and it is not something any one operator can
+      fix alone — it is worth knowing before the outage rather than during it.
+    </p>
+    {% endif %}
+    {% if network.co_hosted %}
+    <p class="prose">
+      {{ network.co_hosted }} address{{ 'es' if network.co_hosted != 1 else '' }}
+      serve{{ '' if network.co_hosted != 1 else 's' }} more than one listed service —
+      a node and a relay on the same machine. They are listed separately because they
+      are separate services, but they fail together.
+    </p>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block footer_extra %}
+{% if snapshot and snapshot.stale %}
+<p class="notice stale">
+  The checker has not completed a round recently. Everything above is the last state it
+  managed to record, not the current one.
+</p>
+{% endif %}
+{% endblock %}

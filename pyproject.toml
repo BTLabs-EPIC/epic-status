@@ -1,0 +1,65 @@
+[project]
+name = "epic-status"
+version = "0.1.0"
+description = "Health and uptime monitoring for Epic Cash mainnet public nodes and Epicbox relays"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+# Every version is pinned exactly rather than floored. A status page's whole value
+# is that it keeps running unattended; a surprise minor release picked up by a
+# rebuild six months from now is the most likely way that stops being true.
+#
+# Runtime deps track current stable. Dev tooling is pinned to what is known-good
+# on the machine this was written on, because a type checker's version is not a
+# property of the shipped artifact.
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn==0.53.0",
+    "httpx==0.28.1",
+    "websockets==17.1",
+    "jinja2==3.1.6",
+    # FastAPI needs this for Form() parsing; the submit endpoint is a form post.
+    "python-multipart==0.0.20",
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
+    "typer==0.27.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.4.2",
+    "pytest-asyncio==1.2.0",
+    "mypy==1.18.2",
+    "respx==0.22.0",
+]
+
+[project.scripts]
+epic-status = "epic_status.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+epic_status = ["static/*", "templates/*"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+# Probe responses from third-party hosts are parsed defensively and validated into
+# models at the boundary; nothing untyped escapes epic_status.probes.
+disallow_any_explicit = false
+
+[[tool.mypy.overrides]]
+module = ["uvicorn.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["error"]

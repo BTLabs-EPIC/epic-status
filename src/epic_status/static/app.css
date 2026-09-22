@@ -1,0 +1,1199 @@
+/* ==========================================================================
+   epic-status
+   --------------------------------------------------------------------------
+   The design system is inherited from epic-devhub so this reads as a sibling of
+   the docs and the explorer rather than as a third party's page. Tokens, type
+   rules and geometry are transcribed from epic-devhub/site/src/css/custom.css.
+
+   Rules carried over, and worth not relitigating:
+     * Never write a raw length for padding, margin or gap. Use --sp-*.
+     * Depth comes from surface value plus a 1px hairline, never a drop shadow.
+     * No hover transforms. Promoting a row to a compositing layer switches its
+       text to grayscale antialiasing and looks blurry.
+     * Square geometry for anything data-shaped. Radii only on cards and chips.
+     * Gold is a mark and a state, never a large fill and never body text on
+       paper. On paper gold-as-text is #8a5a1d and gold-as-mark is #b87a2a; real
+       #f6d471 appears only inside charcoal chrome.
+     * Montserrat at heading sizes only. Below ~14px a geometric display face
+       renders mushy, so small UI text uses the platform stack and all chain data
+       uses monospace.
+
+   Additions specific to a status page:
+     * Mobile first. The narrow layout is the base and the table is the
+       enhancement, because the phone case is the one a community page actually
+       gets read in and it should not be the afterthought.
+     * State is never carried by colour alone. Every light has a text label
+       beside it, in the row and in the aria-label.
+   ========================================================================== */
+
+/* Self-hosted rather than fetched from a font CDN, so no reader's address is
+   disclosed to a third party for the sake of a typeface. On a privacy coin's own
+   infrastructure page that is not a small detail. SIL OFL 1.1. */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/static/fonts/montserrat-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/static/fonts/montserrat-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
+    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+    U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* ---------------------------------------------------------------- tokens */
+
+:root {
+  --gold-light: #f6d471;
+  --gold-deep: #c98a3e;
+  --gradient-gold: linear-gradient(93.95deg, #f6d471 0%, #c98a3e 100%);
+
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-display: 'Montserrat', var(--font-ui);
+  /* Unambiguous zero and distinguishable l/1/I, which matters when the page is
+     mostly block heights and hashes. */
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', ui-monospace, SFMono-Regular, 'SF Mono', Menlo,
+    Consolas, 'Liberation Mono', monospace;
+
+  --t-micro: 0.6875rem;
+  --t-small: 0.8125rem;
+  --t-body: 0.9375rem;
+  --t-h1: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+
+  --sp-2: 0.125rem;
+  --sp-4: 0.25rem;
+  --sp-6: 0.375rem;
+  --sp-8: 0.5rem;
+  --sp-12: 0.75rem;
+  --sp-16: 1rem;
+  --sp-20: 1.25rem;
+  --sp-24: 1.5rem;
+  --sp-32: 2rem;
+  --sp-40: 2.5rem;
+  --sp-48: 3rem;
+
+  --ctl-sm: 1.75rem;
+  --ctl-md: 2rem;
+  --ctl-lg: 2.5rem;
+
+  --content-max: 1320px;
+  --topbar-h: 3.5rem;
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur: 180ms;
+}
+
+[data-theme='dark'] {
+  --s1: #0d0d10;
+  --s2: #131318;
+  --s3: #1a1a21;
+  --s4: #22222b;
+  --line: #24242a;
+  --line-strong: #33333d;
+
+  --bg: #08080a;
+  --bg-chrome: #0c0c0f;
+  --ink: #fff9f9;
+  --ink-dim: #8a8a8a;
+  --primary: #f6d471;
+  --mark: #f6d471;
+  --code-bg: rgba(246, 212, 113, 0.08);
+  --code-ink: #fbe5a6;
+  --stripe: rgba(255, 249, 249, 0.03);
+
+  --ok-ink: #b2f2bb;
+  --ok-bg: rgba(64, 192, 87, 0.12);
+  --ok-line: rgba(64, 192, 87, 0.4);
+  --ok-dot: #40c057;
+  --warn-ink: #ffd8a8;
+  --warn-bg: rgba(201, 138, 62, 0.18);
+  --warn-line: rgba(201, 138, 62, 0.5);
+  --warn-dot: #c98a3e;
+  --danger-ink: #ffc9c9;
+  --danger-bg: rgba(224, 49, 49, 0.15);
+  --danger-line: rgba(224, 49, 49, 0.5);
+  --danger-dot: #e03131;
+  --info-ink: #b9dcff;
+  --info-bg: rgba(51, 154, 240, 0.14);
+  --info-line: rgba(51, 154, 240, 0.5);
+  --info-dot: #339af0;
+}
+
+/* Light mode is charcoal chrome on warm paper, not white with dark text.
+   Elevation runs DOWN from the page on paper; the two modes disagree on
+   purpose. */
+[data-theme='light'] {
+  --s1: #f8f5ef;
+  --s2: #efe9dd;
+  --s3: #e6dece;
+  --s4: #ddd3c0;
+  --line: #d5ccbb;
+  --line-strong: #b7ac98;
+
+  --bg: #f8f5ef;
+  --bg-chrome: #1b1a18;
+  --ink: #221f1a;
+  --ink-dim: #675e54;
+  --primary: #8a5a1d;
+  --mark: #b87a2a;
+  --code-bg: rgba(138, 90, 29, 0.07);
+  --code-ink: #6b4518;
+  --stripe: rgba(34, 31, 26, 0.03);
+
+  --chrome: #1b1a18;
+  --chrome-ink: #f7f2e8;
+  --chrome-dim: #b3aa9c;
+  --chrome-line: #322e29;
+
+  --ok-ink: #237032;
+  --ok-bg: rgba(64, 192, 87, 0.12);
+  --ok-line: rgba(64, 192, 87, 0.45);
+  --ok-dot: #2f9e44;
+  --warn-ink: #7a4a12;
+  --warn-bg: rgba(201, 138, 62, 0.16);
+  --warn-line: rgba(201, 138, 62, 0.5);
+  --warn-dot: #b8791f;
+  --danger-ink: #b02020;
+  --danger-bg: rgba(224, 49, 49, 0.1);
+  --danger-line: rgba(224, 49, 49, 0.45);
+  --danger-dot: #d32f2f;
+  --info-ink: #1b5f9f;
+  --info-bg: rgba(51, 154, 240, 0.12);
+  --info-line: rgba(51, 154, 240, 0.45);
+  --info-dot: #1b7fd4;
+}
+
+/* Chrome islands. Rather than restyling each component for light mode, the island
+   root redeclares the token NAMES with dark values, so every child is correct
+   without being enumerated. This is the single trick that makes light mode
+   maintainable. */
+[data-theme='light'] .chrome-island {
+  --bg: var(--chrome);
+  --s1: #221f1c;
+  --s2: #2a2622;
+  --ink: var(--chrome-ink);
+  --ink-dim: var(--chrome-dim);
+  --line: var(--chrome-line);
+  --line-strong: #453f38;
+  --primary: var(--gold-light);
+  --mark: var(--gold-light);
+}
+
+/* ----------------------------------------------------------------- reset */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scrollbar-gutter: stable;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--t-body);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.015em;
+  margin: 0;
+}
+
+a {
+  color: var(--primary);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--mark);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.shell {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 0 var(--sp-16);
+}
+
+/* ---------------------------------------------------------------- topbar */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--line);
+}
+
+[data-theme='light'] .topbar {
+  background: var(--chrome);
+  border-bottom-color: var(--chrome-line);
+}
+
+.topbar-in {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  min-height: var(--topbar-h);
+  padding: 0 var(--sp-16);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-16);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.9375rem;
+  color: var(--ink);
+  text-decoration: none;
+  flex: 0 0 auto;
+}
+
+[data-theme='light'] .brand {
+  color: var(--chrome-ink);
+}
+
+.brand-mark {
+  width: var(--ctl-sm);
+  height: var(--ctl-sm);
+  border-radius: 6px;
+  background: var(--gradient-gold);
+  color: #1b1a18;
+  display: grid;
+  place-items: center;
+  font-size: var(--t-small);
+  font-weight: 800;
+}
+
+.topnav {
+  display: flex;
+  gap: var(--sp-4);
+  margin-left: auto;
+  align-items: center;
+  /* No wrapping. At 390px "Add a server" broke across two lines and shoved the
+     theme control off the screen. Scroll the overflow instead, and keep the
+     scrollbar out of the chrome. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.topnav::-webkit-scrollbar {
+  display: none;
+}
+
+.topnav a {
+  white-space: nowrap;
+}
+
+.topnav a {
+  padding: var(--sp-6) var(--sp-8);
+  border-radius: 5px;
+  font-size: var(--t-small);
+  color: var(--ink-dim);
+  text-decoration: none;
+}
+
+[data-theme='light'] .topnav a {
+  color: var(--chrome-dim);
+}
+
+.topnav a:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.topnav a[aria-current='page'] {
+  color: var(--primary);
+}
+
+[data-theme='light'] .topnav a[aria-current='page'] {
+  color: var(--gold-light);
+}
+
+.theme-toggle {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-dim);
+  height: var(--ctl-sm);
+  min-width: var(--ctl-sm);
+  border-radius: 5px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+[data-theme='light'] .theme-toggle {
+  border-color: var(--chrome-line);
+  color: var(--chrome-dim);
+}
+
+.theme-toggle:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+/* ------------------------------------------------------------------ main */
+
+main {
+  padding: var(--sp-24) 0 var(--sp-48);
+}
+
+.page-head {
+  margin-bottom: var(--sp-20);
+}
+
+.page-head h1 {
+  font-size: var(--t-h1);
+}
+
+.page-head p {
+  margin: var(--sp-8) 0 0;
+  color: var(--ink-dim);
+  font-size: var(--t-small);
+  max-width: 62ch;
+}
+
+/* --------------------------------------------------------------- verdict */
+
+/* The headline. One sentence derived from data already collected, so a reader who
+   gets no further than the first screen still leaves with the answer. */
+.verdict {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-12);
+  padding: var(--sp-16);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--s1);
+  margin-bottom: var(--sp-16);
+}
+
+.verdict-ok {
+  border-left-color: var(--ok-line);
+  background: var(--ok-bg);
+}
+.verdict-warn {
+  border-left-color: var(--warn-line);
+  background: var(--warn-bg);
+}
+.verdict-bad {
+  border-left-color: var(--danger-line);
+  background: var(--danger-bg);
+}
+.verdict-info {
+  border-left-color: var(--info-line);
+  background: var(--info-bg);
+}
+
+.verdict-text {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.verdict-text strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.verdict-text span {
+  display: block;
+  font-size: var(--t-small);
+  color: var(--ink-dim);
+  margin-top: var(--sp-2);
+}
+
+.verdict-meta {
+  flex: 0 0 auto;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------------ dot */
+
+/* The traffic light. A ring rather than a filled circle at rest, because a solid
+   dot at 9px on a dark surface reads as a rendering artefact. */
+.dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 9px;
+  background: var(--ink-dim);
+}
+
+.dot-healthy {
+  background: var(--ok-dot);
+  box-shadow: 0 0 0 3px var(--ok-bg);
+}
+.dot-degraded {
+  background: var(--warn-dot);
+  box-shadow: 0 0 0 3px var(--warn-bg);
+}
+.dot-down {
+  background: var(--danger-dot);
+  box-shadow: 0 0 0 3px var(--danger-bg);
+}
+.dot-unknown {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+}
+
+/* A single slow pulse on healthy rows, to signal the page is live rather than a
+   screenshot. Motion here earns its place: without it there is no way to tell a
+   working auto-refresh from a frozen one. */
+.dot-healthy.is-live {
+  animation: pulse 2.6s var(--ease) infinite;
+}
+
+@keyframes pulse {
+  0%,
+  72%,
+  100% {
+    box-shadow: 0 0 0 3px var(--ok-bg);
+  }
+  36% {
+    box-shadow: 0 0 0 7px rgba(64, 192, 87, 0);
+  }
+}
+
+/* ---------------------------------------------------------------- strip */
+
+.strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: var(--sp-24);
+}
+
+.strip > div {
+  background: var(--bg);
+  padding: var(--sp-12) var(--sp-16);
+  min-width: 0;
+}
+
+.strip dt {
+  font-size: var(--t-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin: 0 0 var(--sp-2);
+}
+
+.strip dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 1.125rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.strip small {
+  display: block;
+  font-family: var(--font-ui);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  margin-top: var(--sp-2);
+}
+
+/* ---------------------------------------------------------------- group */
+
+.group {
+  margin-bottom: var(--sp-32);
+}
+
+.group-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-12);
+  flex-wrap: wrap;
+  padding-bottom: var(--sp-8);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: var(--sp-12);
+}
+
+.group-head h2 {
+  font-size: 1.0625rem;
+}
+
+.group-count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+}
+
+/* ----------------------------------------------------------------- rows */
+
+/* One markup tree, two presentations. On a phone each row is a card with the
+   numbers on a second line; from 900px up the same elements line up as a table.
+   A separate mobile template would be a second thing to keep correct. */
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--sp-8);
+}
+
+.row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: var(--sp-12);
+  background: var(--s1);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  /* Three rows. `meta` and `why` were both assigned `meta` at one point and
+     silently stacked on top of each other — the sparkline drew straight through the
+     latency text. Grid does not warn about that; a phone screenshot did. */
+  grid-template-areas:
+    'dot host state'
+    'meta meta meta'
+    'why  why  why';
+  gap: var(--sp-8) var(--sp-12);
+  align-items: center;
+}
+
+.row-dot {
+  grid-area: dot;
+}
+
+.row-host {
+  grid-area: host;
+  min-width: 0;
+}
+
+.row-host b {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+/* Direct child only. Unscoped, this matched the `ours` badge nested inside and
+   stretched it across the row — a descendant selector picking up a span it was
+   never written for. */
+.row-host > span {
+  display: block;
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+
+.badge {
+  display: inline-block;
+  font-size: var(--t-micro);
+  font-family: var(--font-ui);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0 var(--sp-4);
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  color: var(--ink-dim);
+  margin-left: var(--sp-6);
+  vertical-align: 1px;
+}
+
+/* The one place the instance operator's own infrastructure is marked. Listing
+   your own hosts on a page you control without saying so reads as promotion. */
+.badge-ours {
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+
+.row-state {
+  grid-area: state;
+  justify-self: end;
+  text-align: right;
+}
+
+.row-state b {
+  display: block;
+  font-size: var(--t-small);
+  font-weight: 600;
+}
+
+.row-state span {
+  display: block;
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.state-healthy b {
+  color: var(--ok-ink);
+}
+.state-degraded b {
+  color: var(--warn-ink);
+}
+.state-down b {
+  color: var(--danger-ink);
+}
+.state-unknown b {
+  color: var(--ink-dim);
+}
+
+.row-meta {
+  grid-area: meta;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4) var(--sp-16);
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  align-items: center;
+}
+
+.row-meta em {
+  font-style: normal;
+  color: var(--ink-dim);
+  opacity: 0.7;
+  margin-right: var(--sp-4);
+}
+
+.row-meta b {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.lag-warn b {
+  color: var(--warn-ink);
+}
+
+.row-detail {
+  grid-area: meta;
+}
+
+/* ----------------------------------------------------------------- flag */
+
+.flag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  vertical-align: -2px;
+}
+
+.flag svg {
+  display: block;
+  width: 18px;
+  height: 12.6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+}
+
+/* Where the country is known but no drawing exists, and where it is not known at
+   all. Both occupy the same slot as a flag so the column never looks broken —
+   RDAP genuinely returns no country for some allocations, including Vultr's. */
+.flag-code,
+.flag-none {
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  letter-spacing: 0.04em;
+  padding: 0 var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--ink-dim);
+  min-width: 20px;
+  justify-content: center;
+}
+
+.flag-none {
+  opacity: 0.65;
+  text-transform: lowercase;
+}
+
+/* --------------------------------------------------------------- sparkline */
+
+.spark {
+  display: inline-flex;
+  gap: 2px;
+  align-items: flex-end;
+  height: 14px;
+}
+
+.spark i {
+  display: block;
+  width: 3px;
+  border-radius: 1px;
+  background: var(--ok-dot);
+  opacity: 0.85;
+}
+
+.spark i.bad {
+  background: var(--danger-dot);
+  height: 14px;
+}
+
+/* ----------------------------------------------------------------- bars */
+
+/* The 90-day bar, the one convention worth borrowing wholesale from the
+   commercial status pages. A day with no data is a gap, not an outage. */
+.bar {
+  display: flex;
+  gap: 1.5px;
+  height: 28px;
+  align-items: stretch;
+}
+
+.bar i {
+  flex: 1 1 0;
+  min-width: 1px;
+  border-radius: 1px;
+  background: var(--ok-dot);
+  opacity: 0.8;
+}
+
+.bar i.warn {
+  background: var(--warn-dot);
+}
+.bar i.bad {
+  background: var(--danger-dot);
+}
+.bar i.none {
+  background: var(--s3);
+}
+
+.bar-legend {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  margin-top: var(--sp-4);
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: var(--sp-16);
+  background: var(--s1);
+  margin-bottom: var(--sp-12);
+}
+
+/* ----------------------------------------------------------------- forms */
+
+.form-grid {
+  display: grid;
+  gap: var(--sp-12);
+  max-width: 34rem;
+}
+
+.field {
+  display: grid;
+  gap: var(--sp-4);
+}
+
+.field > span {
+  font-size: var(--t-micro);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.field input,
+.field select {
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  padding: var(--sp-8) var(--sp-12);
+  min-height: var(--ctl-lg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--s2);
+  color: var(--ink);
+  width: 100%;
+}
+
+.field small {
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+}
+
+.btn {
+  appearance: none;
+  font-family: var(--font-ui);
+  font-size: var(--t-small);
+  font-weight: 600;
+  min-height: var(--ctl-lg);
+  padding: 0 var(--sp-20);
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  background: var(--s2);
+  color: var(--ink);
+  cursor: pointer;
+  justify-self: start;
+}
+
+.btn-primary {
+  background: var(--gradient-gold);
+  border-color: transparent;
+  color: #1b1a18;
+}
+
+.btn:hover {
+  border-color: var(--mark);
+}
+
+.notice {
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 6px;
+  padding: var(--sp-12) var(--sp-16);
+  margin-bottom: var(--sp-16);
+  font-size: var(--t-small);
+}
+
+.notice-ok {
+  border-left-color: var(--ok-line);
+  background: var(--ok-bg);
+  color: var(--ok-ink);
+}
+
+.notice-bad {
+  border-left-color: var(--danger-line);
+  background: var(--danger-bg);
+  color: var(--danger-ink);
+}
+
+.notice-info {
+  border-left-color: var(--info-line);
+  background: var(--info-bg);
+}
+
+.prose {
+  max-width: 62ch;
+  font-size: var(--t-small);
+  color: var(--ink-dim);
+}
+
+.prose h2 {
+  color: var(--ink);
+  font-size: 1rem;
+  margin: var(--sp-24) 0 var(--sp-8);
+}
+
+.prose code,
+code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--code-bg);
+  color: var(--code-ink);
+  padding: 0 var(--sp-4);
+  border-radius: 3px;
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: var(--sp-12);
+  overflow-x: auto;
+  color: var(--code-ink);
+}
+
+.checklist {
+  list-style: none;
+  margin: var(--sp-12) 0 0;
+  padding: 0;
+  font-size: var(--t-small);
+}
+
+.checklist li {
+  display: flex;
+  gap: var(--sp-8);
+  padding: var(--sp-6) 0;
+  border-top: 1px solid var(--line);
+}
+
+.checklist li:first-child {
+  border-top: 0;
+}
+
+.checklist .mark {
+  font-family: var(--font-mono);
+  flex: 0 0 1rem;
+  color: var(--ok-ink);
+}
+
+/* ---------------------------------------------------------------- footer */
+
+.foot {
+  border-top: 1px solid var(--line);
+  padding: var(--sp-24) 0 var(--sp-40);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+}
+
+.foot p {
+  margin: 0 0 var(--sp-8);
+  max-width: 70ch;
+}
+
+.foot a {
+  color: var(--ink-dim);
+}
+
+.stale {
+  border-left-color: var(--warn-line);
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+}
+
+/* ------------------------------------------------------------- wide layout */
+
+@media (min-width: 900px) {
+  .strip {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  /* The table appears only here. Below this width the same rows are cards, which
+     is why there is no horizontal scroll container anywhere on this page. */
+  .rows {
+    gap: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .row {
+    border: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 0;
+    background: transparent;
+    grid-template-columns: auto minmax(12rem, 1fr) repeat(4, minmax(0, auto)) 7rem;
+    /* Two rows. Without an explicit `meta` area here the reason line fell into an
+       implicit row at column one and sat underneath the traffic light. */
+    grid-template-areas:
+      'dot host m1 m2 m3 m4 state'
+      '.   why  why why why why why';
+    align-items: center;
+    padding: var(--sp-12) var(--sp-16);
+    column-gap: var(--sp-20);
+    row-gap: var(--sp-4);
+  }
+
+  .row:first-child {
+    border-top: 0;
+  }
+
+  .row:nth-child(even) {
+    background: var(--stripe);
+  }
+
+  /* Each metric is placed explicitly rather than flowing, so the columns line up
+     across rows even when a value is missing. */
+  .row-meta {
+    display: contents;
+  }
+
+  .row-meta > .m {
+    font-family: var(--font-mono);
+    font-size: var(--t-small);
+    color: var(--ink-dim);
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .row-meta > .m em {
+    display: none;
+  }
+
+  .row-meta > .m1 {
+    grid-area: m1;
+  }
+  .row-meta > .m2 {
+    grid-area: m2;
+  }
+  .row-meta > .m3 {
+    grid-area: m3;
+    text-align: left;
+  }
+  .row-meta > .m4 {
+    grid-area: m4;
+  }
+
+  .row-head {
+    display: grid;
+    grid-template-columns: auto minmax(12rem, 1fr) repeat(4, minmax(0, auto)) 7rem;
+    grid-template-areas: 'dot host m1 m2 m3 m4 state';
+    column-gap: var(--sp-20);
+    padding: var(--sp-8) var(--sp-16);
+    background: var(--s1);
+    border-bottom: 1px solid var(--line);
+    font-size: var(--t-micro);
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+
+  .row-head > span:nth-child(3),
+  .row-head > span:nth-child(4),
+  .row-head > span:nth-child(6) {
+    text-align: right;
+  }
+
+  .row-head > span:last-child {
+    text-align: right;
+  }
+}
+
+@media (max-width: 899px) {
+  /* No column headers in card mode: each value carries its own label instead. */
+  .row-head {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  /* The brand wordmark is the first casualty, not the navigation. Someone on a
+     phone already knows which site they opened. */
+  .brand {
+    font-size: 0;
+    gap: 0;
+  }
+
+  .brand-mark {
+    font-size: var(--t-small);
+  }
+
+  .topbar-in {
+    gap: var(--sp-8);
+    padding: 0 var(--sp-12);
+  }
+
+  .shell {
+    padding: 0 var(--sp-12);
+  }
+
+  .verdict {
+    flex-wrap: wrap;
+  }
+
+  /* Below this width the timestamp under the verdict competes with the headline
+     for the same line and wins, which is the wrong priority. */
+  .verdict-meta {
+    flex-basis: 100%;
+    text-align: left;
+    padding-left: var(--sp-20);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot-healthy.is-live {
+    animation: none;
+  }
+  * {
+    transition: none !important;
+  }
+}
+
+
+/* ------------------------------------------------- classes, not inline styles
+ *
+ * Every rule below replaced a `style=` attribute in a template. That was not a
+ * tidiness exercise: the Content Security Policy this service sets on its own
+ * responses has `style-src 'self'` with no `unsafe-inline`, so an inline style
+ * attribute is simply dropped by the browser. The page looked subtly wrong and
+ * nothing in the logs said why — it was caught by screenshotting the real page.
+ * Adding `unsafe-inline` to make the attributes work would have been the wrong
+ * direction of fix.
+ */
+
+.prose-tight {
+  margin: 0;
+}
+
+/* The reason line. Its own class rather than a second `.row-meta`, because in the
+   wide layout `.row-meta` becomes `display: contents` so its children can be placed
+   into table columns — which would scatter this sentence across them. */
+.row-why {
+  grid-area: why;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-12);
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+}
+
+.group-head-bare {
+  border: 0;
+  padding-bottom: 0;
+  margin-bottom: var(--sp-12);
+}
+
+.host-heading {
+  font-size: 0.9375rem;
+  font-family: var(--font-mono);
+}
+
+/* Sparkline bars are uniform. Pass or fail is the only information present, so a
+   varying height would imply a magnitude that does not exist. */
+.spark i.ok {
+  height: 9px;
+}
+
+.spark i.bad {
+  height: 14px;
+}
+
+
+/* The label is uppercased; the word "optional" inside it should not be, or it reads
+   as a second field name rather than a qualifier. */
+.field > span small {
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.8;
+}

@@ -1,0 +1,123 @@
+{#
+  One row, used for both groups.
+
+  Single markup tree for phone and desktop: below 900px each row is a card with its
+  numbers on a second line and each value carrying its own label; above it the same
+  elements are placed into grid areas as a table and the labels are hidden. A
+  separate mobile template would be a second thing to keep correct, and the phone is
+  the case this page is actually read in.
+
+  Every state carries a word as well as a colour, in the visible text and in the
+  aria-label, because colour alone is not a signal.
+#}
+
+{% macro row(status, kind, tip) %}
+{% set t = status.target %}
+<li class="row state-{{ status.state.value }}">
+  <span
+    class="row-dot dot dot-{{ status.state.value }}{% if status.state == State.HEALTHY %} is-live{% endif %}"
+    role="img"
+    aria-label="{{ status.state | state_label }}"
+    data-slug="{{ t.slug }}"
+  ></span>
+
+  <span class="row-host">
+    <b>{{ t.display_host }}{% if t.ours %}<span class="badge badge-ours">ours</span>{% endif %}</b>
+    <span>
+      {{ t.operator or t.label or 'operator not stated' }}
+      {%- if t.geo.provider %} · {{ t.geo.provider }}{% endif -%}
+    </span>
+  </span>
+
+  <span class="row-meta">
+    {% if kind == Kind.NODE %}
+    <span class="m m1" data-field="height" data-slug="{{ t.slug }}">
+      <em>height</em>{{ status.height | thousands }}
+    </span>
+    <span class="m m2{% if status.tip_lag and status.tip_lag > 0 %} lag-warn{% endif %}"
+          data-field="lag" data-slug="{{ t.slug }}">
+      <em>vs tip</em><b>{{ lag_note(status) }}</b>
+    </span>
+    {% else %}
+    <span class="m m1" data-field="protocol" data-slug="{{ t.slug }}">
+      <em>protocol</em>{{ status.protocol_version or '—' }}
+    </span>
+    <span class="m m2" data-field="cert" data-slug="{{ t.slug }}">
+      <em>cert</em>{% if status.cert_expires_in_days is not none %}{{ status.cert_expires_in_days }}d{% else %}—{% endif %}
+    </span>
+    {% endif %}
+
+    <span class="m m3">
+      <em>where</em>
+      <span title="{{ t.geo.display_country | flag_title }}{% if t.geo.city %} · {{ t.geo.city }}{% endif %}">
+        {{ t.geo.display_country | flag }}
+      </span>
+    </span>
+
+    <span class="m m4" data-field="latency" data-slug="{{ t.slug }}">
+      <em>from {{ prober_id }}</em>{{ status.latency_ms | ms }}
+    </span>
+  </span>
+
+  <span class="row-state">
+    <b>{{ status.state | state_label }}</b>
+    {% if status.state == State.HEALTHY %}
+    <span
+      data-field="seen"
+      data-slug="{{ t.slug }}"
+      data-age="{{ status.last_ok_at | epoch_ms }}"
+    >{{ status.last_ok_at | relative }}</span>
+    {% else %}
+    <span
+      data-field="seen"
+      data-slug="{{ t.slug }}"
+      data-age="{{ status.last_ok_at | epoch_ms }}"
+      title="{{ status.detail or status.last_error or '' }}"
+    >
+      {%- if status.last_ok_at %}last seen {{ status.last_ok_at | relative }}{% else %}never seen{% endif -%}
+    </span>
+    {% endif %}
+  </span>
+
+  {% if status.detail or status.last_error or status.history %}
+  {#
+    The reason, in full, on its own line. Borrowed from cosmos.directory, which is
+    the only comparable service that publishes per-endpoint error text — it lets an
+    operator diagnose their own server without contacting anyone.
+  #}
+  <span class="row-why">
+    {% if status.detail or status.last_error %}
+    <span class="m">{{ status.detail or status.last_error }}</span>
+    {% endif %}
+    {% if status.history %}
+    <span class="spark" role="img"
+          aria-label="last {{ status.history | length }} checks, {{ status.history | select | list | length }} successful">
+      {#
+        Uniform bars. An earlier version varied the height of successful checks,
+        which looked like a latency graph and encoded nothing at all — the only
+        information here is pass or fail, so that is all the shape says.
+      #}
+      {% for ok in status.history %}<i class="{{ 'ok' if ok else 'bad' }}"></i>{% endfor %}
+    </span>
+    {% endif %}
+  </span>
+  {% endif %}
+</li>
+{% endmacro %}
+
+{% macro head(kind) %}
+<div class="row-head" aria-hidden="true">
+  <span></span>
+  <span>Host</span>
+  {% if kind == Kind.NODE %}
+  <span>Height</span>
+  <span>vs tip</span>
+  {% else %}
+  <span>Protocol</span>
+  <span>Cert</span>
+  {% endif %}
+  <span>Where</span>
+  <span>Latency</span>
+  <span>State</span>
+</div>
+{% endmacro %}

@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Runtime state. The database holds uptime history, which is irreplaceable — but it
+# is machine state, not source. Back it up; do not commit it.
+*.db
+*.db-wal
+*.db-shm
+data/
+
+# Local overrides.
+.env

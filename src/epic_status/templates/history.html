@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% set page = 'history' %}
+{% block title %}History — {{ site_name }}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>90 days, one bar per day</h1>
+  <p>
+    A grey day is a day with no data — usually because this checker was not running — not
+    an outage. Successful checks are pruned after a week, so the bars are built from hourly
+    rollups; failures are kept indefinitely.
+  </p>
+</div>
+
+{% if rows %}
+{% for status in rows %}
+<div class="card">
+  <div class="group-head group-head-bare">
+    <h2 class="host-heading">
+      {{ status.target.display_host }}
+      {% if status.target.ours %}<span class="badge badge-ours">ours</span>{% endif %}
+      <span class="badge">{{ status.target.kind.value }}</span>
+    </h2>
+    <span class="group-count">
+      1h {{ status.uptime_1h | pct }} · 24h {{ status.uptime_24h | pct }} · 30d {{ status.uptime_30d | pct }}
+    </span>
+  </div>
+  {% set bar = bars.get(status.target.slug, []) %}
+  {% if bar %}
+  <div class="bar" role="img"
+       aria-label="Daily uptime for {{ status.target.display_host }} over the last {{ bar | length }} days">
+    {% for day, value in bar %}
+    <i class="{{ bar_class(value) }}" title="{{ day }}: {{ value | pct }}"></i>
+    {% endfor %}
+  </div>
+  <div class="bar-legend">
+    <span>{{ bar[0][0] }}</span>
+    <span>{{ bar[-1][0] }}</span>
+  </div>
+  {% else %}
+  <p class="prose prose-tight">No history recorded yet.</p>
+  {% endif %}
+</div>
+{% endfor %}
+{% else %}
+<p class="prose">Nothing has been checked yet.</p>
+{% endif %}
+{% endblock %}

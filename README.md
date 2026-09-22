@@ -1,0 +1,416 @@
+# epic-status
+
+Health and uptime monitoring for Epic Cash mainnet public nodes and Epicbox relays.
+One process: an asyncio poller, SQLite, and a server-rendered board. No build step,
+no framework on the client, no external services.
+
+Live instance: <https://status.btlabs.uk>
+
+## What it measures, and what it cannot
+
+Per node, one unauthenticated JSON-RPC call every 5 seconds:
+
+```
+POST {endpoint}/v2/foreign
+{"jsonrpc":"2.0","method":"get_tip","params":[],"id":1}
+```
+
+468 bytes of response. From it: reachability, latency, tip height, tip hash, total
+difficulty. Derived across the fleet: **tip lag against the highest tip seen**, and
+**fork detection** — two nodes reporting the same height with different tip hashes.
+`get_version` runs every 5 minutes; the tip block's timestamp every 60 seconds, from
+one node only, because "is the chain moving" is a property of the chain.
+
+Per relay, every 30 seconds: a WebSocket connection, one frame read, close. The relay
+pushes `{"type":"Challenge","str":...}` unprompted before the client writes anything,
+so a single frame proves TLS, the reverse proxy's upgrade path, the relay process and
+a responsive event loop. Certificate expiry comes from a separate handshake every 6
+hours.
+
+**Peer counts and sync status are not obtainable.** They live on the owner API, which
+requires an `api_secret`. No status page can publish them for someone else's node,
+and this one does not pretend to.
+
+Three things it deliberately does not do:
+
+- **No HTTP `GET` against a relay.** Rendering a relay's own status page fires three
+  outbound TLS connections to other relays. Polling it would make this an amplifier
+  aimed at the hosts it exists to help.
+- **No `Subscribe` or `PostSlate`.** Subscribing registers a throwaway key in a
+  stranger's datastore; posting writes a row in their database.
+- **No probing from the reader's browser.** Timing requests from a visitor to every
+  listed server would put their address in every operator's logs because they opened
+  a status page. Latency shown is measured server-side, from one vantage point, and
+  the page says which.
+
+## Quick start
+
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+
+```sh
+git clone <this repo> epic-status && cd epic-status
+uv sync
+uv run epic-status serve
+```
+
+<http://127.0.0.1:13431>. The database is created on first run and the seed registry
+is loaded from `config/targets.toml` at every boot.
+
+Probe one target without starting anything:
+
+```sh
+uv run epic-status check node.epiccash.com:3413
+uv run epic-status check epicbox.epiccash.com --kind epicbox
+uv run epic-status check node.example.org --json
+```
+
+Exit status is 0 if the target answered, 1 if not, so it works in a shell pipeline.
+It runs the same code the poller runs, including the address checks.
+
+## Configuration
+
+Environment, prefix `EPIC_STATUS_`. A `.env` file in the working directory is read if
+present.
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `BIND` | `127.0.0.1` | Leave it. See [Security](#security). |
+| `PORT` | `13431` | |
+| `DB` | `./data/status.db` | Use an absolute path in a unit file. |
+| `TARGETS_FILE` | `./config/targets.toml` | |
+| `SITE_NAME` | `Epic Cash Status` | |
+| `SITE_URL` | `http://127.0.0.1:13431` | Only used to print the `curl` example. |
+| `PROBER_ID` | `local` | Stamped on every stored check. |
+| `PROBER_REGION` | `unknown` | Shown in the footer. |
+| `SUBMISSIONS_ENABLED` | `true` | `false` removes the form and the endpoint. |
+| `ALLOW_PRIVATE_TARGETS` | `false` | Development only. Read [Security](#security) first. |
+| `KEEP_SUCCESS_DAYS` | `7` | Failures are never pruned. |
+| `MAX_CONCURRENCY` | `16` | Concurrent in-flight probes. |
+| `HTTP_TIMEOUT_S` | `4.0` | Also the floor on sweep duration when a node is dead. |
+| `WS_TIMEOUT_S` | `8.0` | |
+
+Nothing hardcodes a hostname. Moving an instance to a different domain is a DNS
+record and `SITE_URL`.
+
+### The target registry
+
+`config/targets.toml` is the canonical list, in git so adding a community server is a
+reviewable commit. Public submissions live in SQLite instead. Seed entries are exempt
+from auto-removal, because `node.epiccash.com` being down is the most important thing
+this page can report and it must not vanish for being down.
+
+```toml
+[[node]]
+slug = "node.example.org"
+display_host = "node.example.org:3413"
+endpoint = "https://node.example.org:3413"
+p2p = "node.example.org:3414"     # optional, TCP fallback when the API is closed
+operator = "Example Pool"
+country = "DE"                    # optional, and authoritative — see below
+ours = false
+
+[[epicbox]]
+slug = "epicbox.example.org"
+display_host = "epicbox.example.org"
+endpoint = "wss://epicbox.example.org:443/"
+operator = "Example Pool"
+```
+
+`endpoint` is a **URL, not host:port**, because both deployment shapes exist in the
+wild: the node's own listener exposed directly on 3413, or the listener kept on
+loopback with nginx terminating TLS on 443. The second is the better deployment and a
+host:port model cannot express it.
+
+Reconciliation updates seed rows in place. Editing a label never deletes history.
+A seed removed from the file is disabled, not deleted.
+
+## The health model
+
+Three states, not two:
+
+| State | Meaning |
+| --- | --- |
+| **healthy** | Answered, and within `tip_lag_healthy` (10) blocks of the highest tip. |
+| **degraded** | Up but not fully usable, or not yet confirmed down. |
+| **down** | Failed `down_after_failures` (3) consecutive checks. |
+
+A two-state light is wrong in three common cases, all visible to the operators being
+reported on: a node whose foreign API returns 401 is up and in consensus but
+unpollable; a node 5,000 blocks behind answers `get_tip` flawlessly; and a probe that
+failed from *our* host proves nothing about theirs. `degraded` is the honest bucket
+for those, not a hedge.
+
+**Fork detection waits for confirmation.** Two nodes at the same height with
+different tip hashes genuinely hold different blocks — but that is also what a normal
+orphan race looks like for a few seconds on any proof-of-work chain. A conflict must
+persist across three consecutive sweeps before it is called a fork; below that it is
+reported as a reorg in progress. A status page for a small PoW coin that announced a
+fork on every orphan would cause the panic it exists to detect.
+
+**The score, 0–100, covers nodes only.** Reachability 40% (degraded counts as a
+half), tip agreement 35%, latency 15% on a curve that flattens past a second, version
+spread 10%, and a flat −25 if forked. Epicbox is excluded on purpose: a dead relay
+breaks one transport for the wallets configured to use it, a forked chain breaks
+everything, and averaging two failure domains with different blast radii produces a
+number that means nothing in either.
+
+Version spread is in there because it is a security metric on a MimbleWimble chain,
+not trivia — after Litecoin's 2026 MWEB peg-out exploit roughly 70% of nodes were
+still unpatched weeks later.
+
+## Locations
+
+Two sources, both free, both offline after the lookup.
+
+**RDAP** (`rdap.org`, no key, no account) gives the hosting provider and often the
+datacentre code, from the registries themselves. It is refreshed weekly, two targets
+per sweep so the bootstrap service does not answer 429.
+
+**Country is low-confidence and labelled as such.** RDAP records carry it
+inconsistently — Hetzner allocations name the datacentre, Vultr blocks carry no
+country at all — and proxied hosts report the proxy. A `country` in `targets.toml` is
+stored as an override and is never overwritten by a lookup. That is load-bearing: the
+reference instance is a London VPS whose RDAP record says India, because the
+allocation is registered to the provider's NOC.
+
+Flags are inline SVG, self-hosted, no font dependency. Regional-indicator flag emoji
+do not render at all in Chrome on Windows and fall back to boxes on minimal font
+sets. A known country with no drawing gets a two-letter chip; an unknown country gets
+the word `unknown`, occupying the same slot so the column never looks broken.
+
+Provider concentration is shown on the board because it is the more useful fact. At
+the time of writing, every public Epic node and relay is on two companies.
+
+## API
+
+Read-only routes send `access-control-allow-origin: *`, so a browser can consume them
+directly. CORS is set per-route rather than globally, so the submit endpoint is not
+open to cross-origin POSTs.
+
+| Route | |
+| --- | --- |
+| `GET /api/v1/status.json` | Everything. Carries an `ETag`; send `If-None-Match` and a poller costs nothing when nothing changed. |
+| `GET /api/v1/nodes.json?healthy=true` | Bare endpoint list, for a wallet or a failover config. |
+| `GET /api/v1/epicbox.json?healthy=true` | Same, for relays. |
+| `GET /api/v1/health` | Liveness of **this service**, not of the network. 503 when the snapshot is stale. |
+| `POST /api/v1/submit` | `kind`, `host`, `operator`. |
+| `GET /api/docs` | OpenAPI. |
+
+Per-target fields follow [grin.fail](https://grin.fail/nodes.json)'s shape where they
+overlap, since that is already the de-facto schema in this ecosystem. Two are borrowed
+from [cosmos.directory](https://cosmos.directory) instead: `last_error`, so an
+operator can diagnose their own endpoint without contacting anyone, and `operator`, so
+credit is attributed.
+
+```sh
+curl -s https://status.btlabs.uk/api/v1/status.json | jq '.network'
+curl -s 'https://status.btlabs.uk/api/v1/nodes.json?healthy=true' | jq -r '.nodes[]'
+```
+
+`/api/v1/health` returning 503 means this monitor is not working. It is deliberately
+distinguishable from the network being unhealthy — point your own alerting at it, not
+at `/`.
+
+## Submissions
+
+Open `POST`, no human in the loop, following monero.fail and grin.fail. Moderation
+queues on volunteer infrastructure go unattended within a month, and a queue nobody
+empties is worse than none.
+
+```sh
+curl -X POST https://status.btlabs.uk/api/v1/submit \
+  -d kind=node -d host=node.example.org:3413 -d operator="Example Pool"
+```
+
+What happens:
+
+1. The host is parsed and normalised; duplicates are rejected against slug, display
+   host and endpoint.
+2. It must resolve to a public address. Rejection happens **before** anything is
+   stored or contacted.
+3. It lands in a `submissions` table. The main poller never touches it — so a
+   submission cannot make the sweep fan out to an attacker-chosen host.
+4. A separate validator probes it three times, 60 seconds apart. For a node, the
+   chain is **detected** from the tip and compared to the fleet; a submitter's claim
+   about which network they serve is not evidence. For a relay, the handshake must
+   yield a `Challenge`.
+5. On three passes it is promoted to `targets` and appears on the board.
+6. A submitted target that has never once succeeded and has failed 500 consecutive
+   checks deletes itself. Seeds never do.
+
+**Epicbox hostnames may contain only letters, digits and dots.** A hyphen or
+underscore is rejected, and that is not pedantry: a hyphenated relay completes the
+WebSocket handshake perfectly and would show green, while no wallet can parse an
+address on it, so no transaction could ever complete. Listing it would publish a
+permanently broken endpoint as healthy.
+
+What is stored about a submitter: a salted hash of their IP, used only to rate limit.
+The salt is generated at process start and never written down, so the hashes cannot be
+reversed or linked across restarts even by the instance operator.
+
+## Security
+
+Read this before exposing an instance.
+
+**The submit endpoint is unauthenticated and turns a request into outbound
+connections to a host the requester chose.** That is a server-side request forgery
+primitive by construction. Three separate protections, because each alone has a hole:
+
+1. The name is resolved here and the target is refused if **any** returned address is
+   non-public — private, loopback, link-local, multicast, reserved, carrier-grade NAT
+   (which includes Tailscale space). Checking only the first address is defeated by a
+   name resolving to one public and one private address.
+2. The connection goes to the address that was validated, with the hostname carried
+   only as `Host` and TLS SNI. Re-resolving at connect time reopens a DNS-rebinding
+   window between check and request.
+3. Redirects are never followed. A 302 to `http://169.254.169.254/` is the oldest
+   trick in this category and a liveness probe has no use for one.
+
+`ALLOW_PRIVATE_TARGETS=true` disables all of that. It exists for tests and local
+development. On a reachable instance it turns the form into a port scanner aimed at
+your own network.
+
+**Bind loopback and put a reverse proxy in front.** The rate limit trusts
+`x-forwarded-for`, which is only trustworthy when the service cannot be reached
+directly. If you must bind publicly, set `SUBMISSIONS_ENABLED=false`.
+
+The application sets its own CSP, `referrer-policy: no-referrer` and
+`x-content-type-options`, so a self-hoster behind any proxy gets them. Templates are
+autoescaped: hostnames and operator names come from the public form.
+
+## Self-hosting behind nginx
+
+Files in `ops/` are the source of truth and carry install commands in their headers.
+
+```sh
+# 1. Dependencies and database
+uv sync
+uv run epic-status init-db
+
+# 2. Service — reads its port, database path and prober id from the unit
+sudo install -o root -g root -m 0644 ops/systemd/epic-status.service \
+  /etc/systemd/system/epic-status.service
+sudo systemctl daemon-reload && sudo systemctl enable --now epic-status
+systemctl status epic-status
+
+# 3. Certificate. DNS must already point here: HTTP-01 is served from
+#    /.well-known/acme-challenge/ on port 80.
+sudo certbot certonly --webroot -w /var/www/html -d status.example.org
+
+# 4. nginx. Zones first — a vhost naming an undeclared zone fails nginx -t.
+sudo install -o root -g root -m 0644 ops/nginx/status-ratelimit.conf \
+  /etc/nginx/conf.d/status-ratelimit.conf
+sudo install -o root -g root -m 0644 ops/nginx/status.btlabs.uk.conf \
+  /etc/nginx/sites-available/epic-status
+sudo ln -sfn /etc/nginx/sites-available/epic-status /etc/nginx/sites-enabled/epic-status
+sudo nginx -t && sudo systemctl reload nginx   # read the -t output
+```
+
+Edit `server_name`, the certificate paths and the port in the vhost. Three things in
+it are not incidental:
+
+- `listen 443 ssl http2` as a **listen flag**. On nginx 1.24 the `http2 on;`
+  directive is a hard config error.
+- The port-80 ACME location stays on plain HTTP, so a renewal never depends on the
+  certificate it is renewing.
+- `proxy_intercept_errors on` with a branded `@down` page. For a status page a bare
+  nginx 502 is the worst possible failure mode — the one thing it must never do is
+  fail in a way that looks like the network failed.
+
+Rate limits are declared **per location, never at server level**: neither `limit_req`
+nor `limit_conn` accepts `off`, so a server-level limit cannot be lifted where it must
+not apply.
+
+## Operations
+
+```sh
+uv run epic-status targets            # what the committed registry says
+uv run epic-status check <host>       # probe one target now
+uv run epic-status prune --days 7     # drop old successes, then VACUUM
+journalctl -u epic-status -f
+```
+
+**Back up `data/status.db`.** Uptime history and `last_ok_at` cannot be reconstructed
+from anything — no node reports when it was last up. Everything else in the database
+is derived and rebuilt at boot. SQLite runs in WAL mode; `sqlite3 status.db ".backup
+out.db"` is safe against a running service.
+
+Successful checks are pruned after 7 days; **failures are kept indefinitely.** Nobody
+ever needs to prove a node was up, and everybody eventually needs to prove it was
+down. Uptime beyond 7 days comes from hourly rollups, which are not pruned.
+
+Steady-state sweep cost is roughly `HTTP_TIMEOUT_S` when any node is unreachable,
+since the sweep waits for the slowest timeout. Version, tip-age, P2P, certificate and
+RDAP refreshes run as background tasks and do not extend it — an earlier version
+awaited them and a cold start against four dead seeds took twenty seconds.
+
+Resident memory is about 70 MB. The unit sets `MemoryHigh=192M` / `MemoryMax=256M`
+and `OOMScoreAdjust=600`, so on a small box this process loses to anything that
+matters more.
+
+## Development
+
+```sh
+uv sync --extra dev
+uv run pytest -q
+uv run mypy src/epic_status
+```
+
+`mypy --strict`. The test suite does not touch the network: node probes are mocked
+with `respx` against a recorded mainnet response, and the Epicbox test runs a real
+WebSocket server on loopback because the relay's contract is that it sends a frame
+before the client writes anything, and only a real socket demonstrates that.
+
+The address-guard tests in `tests/test_net.py` are the ones to keep green. They are
+the reason the submit form is not a proxy.
+
+Layout:
+
+```
+src/epic_status/
+  models.py      typed boundary — probe results, targets, snapshot
+  config.py      settings, and the committed seed registry
+  db.py          SQLite; checks and rollups are the irreplaceable state
+  net.py         address validation, pinned-IP connections, cert expiry
+  probes/        node.py (get_tip, get_version, get_header) · epicbox.py (Challenge)
+  geo.py         RDAP provider and location
+  score.py       three states, fork detection, the 0–100 score
+  poller.py      the sweep loop and the in-memory snapshot
+  submit.py      submission validation and promotion
+  api.py         routes, JSON schema, security headers
+  render.py      Jinja environment and filters
+  flags.py       inline SVG flags
+  templates/ static/
+ops/             systemd unit and nginx vhost, with install commands
+config/          targets.toml
+```
+
+## Deliberate non-goals
+
+- **No alerting.** If you want Discord or Telegram notifications and 30-day uptime
+  badges, run [Gatus](https://github.com/TwiN/gatus) alongside and push to its
+  external-endpoints API. Reimplementing that here would be worse than it.
+- **Mainnet only.** Floonet is nearly free to add — the chain is detected from the tip
+  — but it doubles the rows a newcomer has to read.
+- **One vantage point.** `prober_id` is on every stored check from the first schema so
+  a second prober in another region is additive rather than a migration, but there is
+  no push endpoint yet. Retrofitting the column would have been impossible: you cannot
+  say after the fact where a measurement was taken from.
+
+## Prior art
+
+[grin.fail](https://grin.fail) is the closest analogue and its JSON schema is followed
+closely; it is not open source. [monero.fail](https://github.com/lalanza808/monero.fail)
+supplied the submission model, the self-deleting-dead-node rule and the
+keep-failures-forever retention policy. [cosmos.directory](https://github.com/eco-stake/cosmos-directory)
+supplied `last_error` and `provider`. [j01tz/grin-health](https://github.com/j01tz/grin-health)
+is where the idea of a single chain-safety number comes from. Atlassian Statuspage is
+where the component groups and the 90-day bar come from.
+
+## Licence
+
+MIT. See `LICENSE`.
+
+Montserrat is bundled under the SIL Open Font License 1.1 and served from this host
+rather than a font CDN, so no reader's address is disclosed to a third party for the
+sake of a typeface.

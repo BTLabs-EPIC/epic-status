@@ -1,0 +1,82 @@
+{#
+  The shell. Dark by default; the theme is read from localStorage by a tiny inline
+  script in app.js before first paint so there is no flash of the wrong mode.
+#}
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}{{ site_name }}{% endblock %}</title>
+    <meta name="description" content="Live health and uptime for Epic Cash public nodes and Epicbox relays." />
+    <meta name="color-scheme" content="dark light" />
+    <link rel="stylesheet" href="/static/app.css" />
+    <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <a class="sr-only" href="#main">Skip to content</a>
+
+    <header class="topbar">
+      <div class="topbar-in">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">E</span>
+          {{ site_name }}
+        </a>
+        <nav class="topnav" aria-label="Sections">
+          <a href="/"{% if page == 'board' %} aria-current="page"{% endif %}>Status</a>
+          <a href="/history"{% if page == 'history' %} aria-current="page"{% endif %}>History</a>
+          {% if submissions_enabled %}
+          <a href="/add"{% if page == 'add' %} aria-current="page"{% endif %}>Add a server</a>
+          {% endif %}
+          <a href="/api/v1/status.json">API</a>
+          <button
+            type="button"
+            class="theme-toggle"
+            id="theme-toggle"
+            aria-label="Switch between dark and light"
+            title="Switch between dark and light"
+          >
+            {# Inline SVG rather than an emoji or an icon font: this host's font set
+               would render a rare glyph as a box, and a control that needs a rare
+               glyph is fragile on every platform. #}
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+              <path d="M8 1a7 7 0 1 0 7 7h-2.2A4.8 4.8 0 1 1 8 3.2V1Z" />
+            </svg>
+          </button>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <div class="shell">
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+
+    <footer class="foot">
+      <div class="shell">
+        {% block footer_extra %}{% endblock %}
+        <p>
+          Checks run from one vantage point, <code>{{ prober_id }}</code>{% if prober_region != 'unknown' %}
+          in {{ prober_region }}{% endif %}. Latency shown is the round trip from there and is a
+          statement about that host's network as much as about the server being checked.
+          Nodes are checked every {{ cadence_s }}s and Epicbox relays every {{ epicbox_cadence_s }}s.
+        </p>
+        <p>
+          Peer counts and sync status are not published by a node without credentials, so they
+          are not shown per server — no status page can obtain them remotely.
+          Locations come from registry records and are a guess for hosts behind a proxy.
+        </p>
+        <p>
+          Nothing here is probed when you load the page: one checker writes the data and every
+          visitor reads the same cached copy.
+          <a href="/api/v1/status.json">JSON API</a> ·
+          <a href="/api/docs">API docs</a> ·
+          open source, self-hostable.
+        </p>
+      </div>
+    </footer>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

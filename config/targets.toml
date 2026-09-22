@@ -1,0 +1,171 @@
+# Seed targets — Epic Cash mainnet.
+#
+# This file is the canonical list, kept in git so that adding or removing a
+# community server is a reviewable change. Public submissions land in SQLite
+# instead and are promoted automatically once they answer; see docs in README.
+#
+# Seed entries are exempt from auto-removal. `node.epiccash.com` being down is
+# the single most important thing this page can report, so it must never vanish
+# for the crime of being down.
+#
+# Every entry below was probed from a UK host while this file was written; the
+# per-entry comments record what answered and what did not. Those notes are
+# observations from one vantage point on one day, not verdicts — the point of the
+# service is to replace them with continuous measurement.
+#
+# `endpoint` is a URL, not host:port, because both deployment shapes exist in the
+# wild: the node's own listener exposed directly on 3413, or the listener kept on
+# loopback with nginx terminating TLS on 443. The second is the better deployment
+# and a host:port model cannot express it.
+
+# ---------------------------------------------------------------------- nodes
+
+[[node]]
+slug = "node.epiccash.com"
+display_host = "node.epiccash.com:3413"
+endpoint = "https://node.epiccash.com:3413"
+p2p = "node.epiccash.com:3414"
+operator = "Epic Cash"
+label = "Default node"
+# Answered get_tip in ~120 ms, unauthenticated, CORS *. Shares its address
+# (144.202.75.237, Vultr) with epicbox.epiccash.com: the default node and the
+# default relay are one machine, so a single outage takes out both. Listed as two
+# rows because they are two services, with the shared address surfaced in the
+# co-hosting count rather than hidden.
+notes = "Shares a host with epicbox.epiccash.com"
+
+[[node]]
+slug = "node.epicnet.us"
+display_host = "node.epicnet.us:3413"
+endpoint = "https://node.epicnet.us:3413"
+p2p = "node.epicnet.us:3414"
+operator = "epicnet.us"
+# Answered get_tip, agreeing on height with node.epiccash.com. Also co-hosted
+# with its own relay on 155.138.197.0 (Vultr).
+notes = "Shares a host with epicbox.epicnet.us"
+
+[[node]]
+slug = "node.btlabs.uk"
+display_host = "node.btlabs.uk"
+# No port: the node's API listens on 127.0.0.1:3413 only and nginx fronts it on
+# 443. Answered get_tip in 41 ms. This is the deployment shape to recommend to
+# operators, and the reason `endpoint` is a URL.
+endpoint = "https://node.btlabs.uk"
+operator = "btlabs"
+ours = true
+country = "GB"
+
+# The four addresses below are the mainnet `seeds = [...]` list shipped in the
+# Epic developer documentation. On probing, all four time out on both 3413 (API)
+# and 3414 (P2P), while the same hosts accept connections on 22 and 80 — so the
+# machines are alive and reachable and the Epic ports specifically are not open.
+# Egress from the probing host is not the explanation: two other Hetzner
+# addresses and both Vultr nodes answered on the same run.
+#
+# They are listed anyway, and this is the main argument for the whole project: a
+# newcomer who copies the seed list out of the official docs today gets four
+# addresses that do not respond. Either the docs are stale or those operators
+# have firewalled the ports, and until something measures it continuously nobody
+# finds out.
+
+[[node]]
+slug = "95.217.197.180"
+display_host = "95.217.197.180:3413"
+endpoint = "https://95.217.197.180:3413"
+p2p = "95.217.197.180:3414"
+label = "Documented seed"
+country = "FI"
+notes = "From the documented mainnet seed list. Also the address of epicbox.51pool.online"
+
+[[node]]
+slug = "5.161.127.56"
+display_host = "5.161.127.56:3413"
+endpoint = "https://5.161.127.56:3413"
+p2p = "5.161.127.56:3414"
+label = "Documented seed"
+country = "US"
+notes = "From the documented mainnet seed list. Hetzner Ashburn"
+
+[[node]]
+slug = "5.75.242.4"
+display_host = "5.75.242.4:3413"
+endpoint = "https://5.75.242.4:3413"
+p2p = "5.75.242.4:3414"
+label = "Documented seed"
+country = "DE"
+notes = "From the documented mainnet seed list. Hetzner Falkenstein"
+
+[[node]]
+slug = "5.78.71.29"
+display_host = "5.78.71.29:3413"
+endpoint = "https://5.78.71.29:3413"
+p2p = "5.78.71.29:3414"
+label = "Documented seed"
+country = "US"
+notes = "From the documented mainnet seed list. Hetzner Hillsboro"
+
+# ------------------------------------------------------------------- epicbox
+#
+# All relays speak wss on 443 with no path. The probe opens the socket, reads the
+# one frame the relay pushes unprompted — {"type":"Challenge","str":...} — and
+# closes. No keys, no signature, no writes.
+#
+# Do not add an HTTP GET probe here. Rendering a relay's own status page fires
+# three outbound TLS connections to other relays, so polling it turns this
+# service into an amplifier aimed at the hosts it exists to help.
+
+[[epicbox]]
+slug = "epicbox.epiccash.com"
+display_host = "epicbox.epiccash.com"
+endpoint = "wss://epicbox.epiccash.com:443/"
+operator = "Epic Cash"
+label = "Default relay"
+# Challenge frame in ~1.3 s. This is the wallet's built-in default, so its health
+# is the single most consequential row in this group.
+notes = "Wallet default. Shares a host with node.epiccash.com"
+
+[[epicbox]]
+slug = "epicbox.epicnet.us"
+display_host = "epicbox.epicnet.us"
+endpoint = "wss://epicbox.epicnet.us:443/"
+operator = "epicnet.us"
+notes = "Shares a host with node.epicnet.us"
+
+[[epicbox]]
+slug = "epicbox.stackwallet.com"
+display_host = "epicbox.stackwallet.com"
+endpoint = "wss://epicbox.stackwallet.com:443/"
+operator = "Cypher Stack"
+label = "Stack Wallet"
+country = "FI"
+# Fastest of the three that answered, ~590 ms. Hetzner Finland.
+notes = "Used by Stack Wallet mobile"
+
+# The two below appear in the relay software's own hardcoded server list, which
+# means wallets are configured to use them, but neither resolves: fastepic.eu
+# returns no address for the name and btlabs.tech does not resolve at all. A
+# wallet pointed at either cannot send. Listed so the page says so out loud.
+
+[[epicbox]]
+slug = "epicbox.fastepic.eu"
+display_host = "epicbox.fastepic.eu"
+endpoint = "wss://epicbox.fastepic.eu:443/"
+operator = "fastEpic"
+notes = "In the relay's built-in server list; DNS did not resolve when last probed"
+
+[[epicbox]]
+slug = "epicbox.btlabs.tech"
+display_host = "epicbox.btlabs.tech"
+endpoint = "wss://epicbox.btlabs.tech:443/"
+notes = "In the relay's built-in server list; DNS did not resolve when last probed"
+
+[[epicbox]]
+slug = "epicbox.51pool.online"
+display_host = "epicbox.51pool.online"
+endpoint = "wss://epicbox.51pool.online:443/"
+operator = "51pool"
+country = "FI"
+# Resolves to 95.217.197.180 — the same address as a documented mainnet seed —
+# and times out during the WebSocket handshake. One machine, two roles, neither
+# answering.
+notes = "Shares an address with the 95.217.197.180 seed entry"

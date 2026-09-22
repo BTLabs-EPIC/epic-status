@@ -1,0 +1,155 @@
+# Epic Cash node/relay status page -- status.btlabs.uk.
+#
+# Source of truth: /home/bt/epic-status/ops/systemd/epic-status.service
+# Install with:
+#   sudo install -o root -g root -m 0644 \
+#     /home/bt/epic-status/ops/systemd/epic-status.service \
+#     /etc/systemd/system/epic-status.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now epic-status
+#
+# Binds 127.0.0.1:13431 only. nginx (sites-available/epic-status) is the sole
+# public path in, and the submit endpoint accepts unauthenticated writes, so the
+# loopback bind is load-bearing rather than tidiness. Do not widen it.
+
+[Unit]
+Description=Epic Cash status page (status.btlabs.uk)
+Documentation=https://status.btlabs.uk/api
+Documentation=file:///home/bt/epic-status/README.md
+After=network-online.target
+Wants=network-online.target
+
+# No dependency on epic-node.service, deliberately. This process watches the
+# mainnet node among others; tying its lifecycle to the node would take the
+# monitor down at exactly the moment someone needs it to explain why the node
+# stopped. It must be able to report "down" about anything on this box.
+
+# StartLimit* MUST live in [Unit], not [Service]. systemd silently ignores them
+# in [Service] ("Unknown key name ... ignoring"), which has already left one
+# guard inert elsewhere in this project family.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=bt
+Group=bt
+WorkingDirectory=/home/bt/epic-status
+
+Environment=EPIC_STATUS_BIND=127.0.0.1
+Environment=EPIC_STATUS_PORT=13431
+Environment=EPIC_STATUS_DB=/home/bt/epic-status/data/status.db
+
+# Absolute, not relative. WorkingDirectory makes a relative path work today and
+# break the first time anyone runs the CLI from elsewhere against the same unit's
+# assumptions; an absolute path means the service and an operator shell agree on
+# which database they are talking about.
+
+# Nothing in the code hardcodes this deployment's hostname. Moving to
+# status.epiccash.com is a DNS record plus these two lines.
+Environment=EPIC_STATUS_SITE_URL=https://status.btlabs.uk
+# Quoted because it contains spaces. Unquoted, systemd splits on whitespace and
+# discards the remainder as two invalid assignments -- it warns and carries on, so
+# the site silently renders under its default name.
+Environment="EPIC_STATUS_SITE_NAME=Epic Cash Status"
+
+# Stamped on every stored check. Latency is a statement about the vantage point
+# that measured it, so a second prober in another region must be distinguishable
+# in the same database rather than a schema migration.
+Environment=EPIC_STATUS_PROBER_ID=btlabs-lon
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+# `uv run --no-sync`: use the .venv that is already there and never touch the
+# network at start. Plain `uv run` resolves and syncs the environment first, which
+# on a boot before DNS is up is a startup failure, and which can silently change
+# the installed dependency set of a running service -- the opposite of why every
+# version in pyproject.toml is pinned exactly.
+#
+# Consequence, which is the intended one: if the venv is missing or stale the unit
+# fails loudly instead of quietly rebuilding itself. Run `uv sync` as part of
+# deployment, not as part of starting.
+ExecStart=/home/bt/.local/bin/uv run --no-sync epic-status serve
+
+Restart=always
+# always, not on-failure: a status page that exits cleanly for any reason is still
+# a status page that is not running. 10s rather than systemd's 100ms default so a
+# crash loop does not compete with the mainnet node for CPU while it loops.
+RestartSec=10
+
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=20
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=epic-status
+
+# --- Resource discipline -----------------------------------------------------
+# 2 vCPU with NO SWAP, sharing the box with a live mainnet node and wallet. This
+# process is observability; it loses to mainnet every time, and the ordering here
+# is what makes that automatic rather than a judgement call at 3am.
+#
+# MemoryHigh below MemoryMax on purpose: at High the kernel reclaims and throttles,
+# which shows up as a slow page and a warning in the journal. Only a genuine leak
+# reaches Max and gets killed. A single limit gives no early signal.
+Nice=10
+OOMScoreAdjust=600
+CPUWeight=50
+IOWeight=50
+MemoryHigh=192M
+MemoryMax=256M
+MemorySwapMax=0
+TasksMax=64
+
+# 256M, not less: the snapshot of every target plus history_points of series is
+# held in memory by design (that is why API reads are cheap), and httpx plus the
+# websockets client for Epicbox probes each carry their own buffers. Measure
+# before lowering this; guessing downward here produces an OOM kill during the
+# incident the page exists to report.
+
+# --- Hardening ---------------------------------------------------------------
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+
+# ProtectSystem=full, not strict. strict would make /home read-only as well, and
+# this service writes its SQLite database under its own working directory. full
+# still gives read-only /usr, /boot, /efi and /etc, which is where anything worth
+# protecting from a web process lives.
+ProtectSystem=full
+
+# ProtectHome is NOT set, and cannot be. The venv, the package, config/targets.toml
+# and data/status.db all live under /home/bt/epic-status. read-only is not enough
+# either -- the database is written on every check.
+# Noted explicitly so nobody adds it later and spends an afternoon on the
+# resulting "unable to open database file".
+
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+# AF_INET/AF_INET6 for outbound probes and the loopback listener; AF_UNIX because
+# getaddrinfo talks to the resolver over a unix socket on systems running a local
+# stub, and probing hostnames is the entire job.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Probes are concurrent and bounded at 16, but each target can hold a socket plus
+# a DNS query; 4096 is generous headroom and still a bound.
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
