@@ -109,12 +109,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         docs_url="/api/docs",
         redoc_url=None,
     )
+    # HEAD is registered alongside GET on every read route. FastAPI does not add
+    # it automatically, and the 405 that results is not academic: uptime monitors
+    # and load balancers commonly probe with HEAD, so `/api/v1/health` — the route
+    # this project tells operators to point their alerting at — would have reported
+    # itself broken to exactly the tools most likely to watch it.
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     app.state.service = service
 
     # ------------------------------------------------------------------ pages
 
-    @app.get("/", response_class=HTMLResponse)
+    @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
     async def board(request: Request) -> HTMLResponse:
         html = render_board(
             snapshot=service.snapshot,
@@ -132,7 +137,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
-    @app.get("/history", response_class=HTMLResponse)
+    @app.api_route("/history", methods=["GET", "HEAD"], response_class=HTMLResponse)
     async def history() -> HTMLResponse:
         snap = service.snapshot
         bars = {}
@@ -147,7 +152,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             html, headers={"cache-control": "no-store", **_security_headers()}
         )
 
-    @app.get("/add", response_class=HTMLResponse)
+    @app.api_route("/add", methods=["GET", "HEAD"], response_class=HTMLResponse)
     async def add_form() -> HTMLResponse:
         return HTMLResponse(
             render_submit(snapshot=service.snapshot, settings=settings),
@@ -176,7 +181,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # -------------------------------------------------------------------- api
 
-    @app.get("/api/v1/status.json")
+    @app.api_route("/api/v1/status.json", methods=["GET", "HEAD"])
     async def status_json(request: Request) -> Response:
         snap = service.snapshot
         if snap is None:
@@ -197,7 +202,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers={"etag": etag, "cache-control": "no-store", **_cors()},
         )
 
-    @app.get("/api/v1/nodes.json")
+    @app.api_route("/api/v1/nodes.json", methods=["GET", "HEAD"])
     async def nodes_json(healthy: bool = False) -> Response:
         """A bare list of endpoints, which is what a wallet or an exchange failover
         config actually wants. `?healthy=true` filters to the ones worth using."""
@@ -218,7 +223,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
         )
 
-    @app.get("/api/v1/epicbox.json")
+    @app.api_route("/api/v1/epicbox.json", methods=["GET", "HEAD"])
     async def epicbox_json(healthy: bool = False) -> Response:
         snap = service.snapshot
         if snap is None:
@@ -231,7 +236,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
         )
 
-    @app.get("/api/v1/health")
+    @app.api_route("/api/v1/health", methods=["GET", "HEAD"])
     async def health() -> Response:
         """Liveness of *this service*, not of the network.
 

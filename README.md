@@ -6,6 +6,8 @@ no framework on the client, no external services.
 
 Live instance: <https://status.btlabs.uk>
 
+Runs as a systemd unit, behind nginx, on one small VPS alongside a live mainnet node.
+
 ## What it measures, and what it cannot
 
 Per node, one unauthenticated JSON-RPC call every 5 seconds:
@@ -293,20 +295,35 @@ sudo install -o root -g root -m 0644 ops/systemd/epic-status.service \
 sudo systemctl daemon-reload && sudo systemctl enable --now epic-status
 systemctl status epic-status
 
-# 3. Certificate. DNS must already point here: HTTP-01 is served from
-#    /.well-known/acme-challenge/ on port 80.
+# 3. A port-80-only bootstrap vhost, so the ACME challenge is reachable.
+#    This step is not optional and not obvious: the full vhost below names
+#    certificate files that do not exist yet, and nginx fails closed on a missing
+#    ssl_certificate — so the cert cannot be issued until something serves port 80
+#    for this name, and the vhost that does that cannot load until the cert exists.
+sudo tee /etc/nginx/sites-available/epic-status >/dev/null <<'BOOTSTRAP'
+server {
+    listen 80;
+    listen [::]:80;
+    server_name status.example.org;
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
+}
+BOOTSTRAP
+sudo ln -sfn /etc/nginx/sites-available/epic-status /etc/nginx/sites-enabled/epic-status
+sudo nginx -t && sudo systemctl reload nginx
+
+# 4. Certificate. DNS must already point here.
 sudo certbot certonly --webroot -w /var/www/html -d status.example.org
 
-# 4. nginx. Zones first — a vhost naming an undeclared zone fails nginx -t.
+# 5. The real vhost. Zones first — one naming an undeclared zone fails nginx -t.
 sudo install -o root -g root -m 0644 ops/nginx/status-ratelimit.conf \
   /etc/nginx/conf.d/status-ratelimit.conf
 sudo install -o root -g root -m 0644 ops/nginx/status.btlabs.uk.conf \
   /etc/nginx/sites-available/epic-status
-sudo ln -sfn /etc/nginx/sites-available/epic-status /etc/nginx/sites-enabled/epic-status
 sudo nginx -t && sudo systemctl reload nginx   # read the -t output
 ```
 
-Edit `server_name`, the certificate paths and the port in the vhost. Three things in
+Edit `server_name`, the certificate paths and the port in the vhost. Four things in
 it are not incidental:
 
 - `listen 443 ssl http2` as a **listen flag**. On nginx 1.24 the `http2 on;`
@@ -315,7 +332,14 @@ it are not incidental:
   certificate it is renewing.
 - `proxy_intercept_errors on` with a branded `@down` page. For a status page a bare
   nginx 502 is the worst possible failure mode — the one thing it must never do is
-  fail in a way that looks like the network failed.
+  fail in a way that looks like the network failed. `/static/` deliberately does
+  *not* intercept, because an HTML error body served as a stylesheet is worse than
+  a 502.
+- `limit_req_status` and `limit_conn_status` are **not** set in
+  `status-ratelimit.conf`. They are http-context directives, and if any other file
+  in `conf.d/` already sets them a second declaration is `directive is duplicate` —
+  a hard error that refuses the reload. Check with
+  `grep -rn limit_req_status /etc/nginx/conf.d/` before adding them.
 
 Rate limits are declared **per location, never at server level**: neither `limit_req`
 nor `limit_conn` accepts `off`, so a server-level limit cannot be lifted where it must
