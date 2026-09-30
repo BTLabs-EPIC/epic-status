@@ -206,3 +206,29 @@ async def test_events_json(app: FastAPI, client: httpx.AsyncClient) -> None:
 
 async def test_unknown_severity_is_refused(client: httpx.AsyncClient) -> None:
     assert (await client.get("/feed.atom", params={"min": "warnn"})).status_code == 400
+
+
+
+# ---------------------------------------------------------------------- badges
+
+
+async def test_badge_shows_state_and_uptime(client: httpx.AsyncClient) -> None:
+    response = await client.get("/badge/node.example.org.svg")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert "epic node" in response.text
+    assert "healthy · 99.81%" in response.text
+
+
+async def test_badge_escapes_the_label(client: httpx.AsyncClient) -> None:
+    response = await client.get(
+        "/badge/node.example.org.svg", params={"label": '<b onload="x">'}
+    )
+    assert "<b " not in response.text
+    assert "&lt;b" in response.text
+
+
+async def test_badge_for_an_unknown_target_is_a_grey_404(client: httpx.AsyncClient) -> None:
+    response = await client.get("/badge/nope.example.org.svg")
+    assert response.status_code == 404
+    assert "not monitored" in response.text

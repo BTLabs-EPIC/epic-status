@@ -35,6 +35,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import admin_routes, schemas
+from .badges import badge_for
 from .config import Settings, load_seed_targets
 from .config import settings as get_settings
 from .db import Database
@@ -527,6 +528,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
         )
 
+    @app.api_route(
+        "/badge/{slug}.svg", methods=["GET", "HEAD"], include_in_schema=False
+    )
+    async def badge(slug: str, kind: str | None = None, label: str | None = None) -> Response:
+        """An embeddable badge for one target: state and 30-day uptime.
+
+        Looked up by the target's `id` across every chain. `?kind=` disambiguates when
+        a node and a relay share a slug; `?label=` replaces the left-hand text.
+        Unknown targets get a grey badge with a 404, so an embed of a removed host
+        says so instead of showing a broken image.
+        """
+        wanted = _kind_or_none(kind)
+        found: TargetStatus | None = None
+        for chain_ in service.chains():
+            snap = service.snapshot_for(chain_)
+            if snap is None:
+                continue
+            for status in (*snap.nodes, *snap.epicbox, *snap.pools):
+                if status.target.slug == slug and wanted in (None, status.target.kind):
+                    found = status
+                    break
+            if found is not None:
+                break
+        text = label or (_badge_label(found) if found is not None else "epic status")
+        return Response(
+            badge_for(found, label=text),
+            status_code=200 if found is not None else 404,
+            media_type="image/svg+xml",
+            headers={
+                # Image proxies such as GitHub's camo honour this. A minute is the
+                # granularity anyone reading a README could care about.
+                "cache-control": "public, max-age=60",
+                **cors(),
+                # Served as an image, but reachable as a document: nothing in it may run.
+                "content-security-policy": "default-src 'none'",
+                "x-content-type-options": "nosniff",
+            },
+        )
+
     @app.head("/api/v1/events.json", include_in_schema=False)
     @app.get(
         "/api/v1/events.json",
@@ -736,6 +776,23 @@ def _chain_or_404(raw: str) -> Chain:
             detail=f"unknown chain {raw!r}; known chains are "
             f"{[c.value for c in Chain]}",
         ) from None
+
+
+def _kind_or_none(raw: str | None) -> Kind | None:
+    if raw is None:
+        return None
+    try:
+        return Kind(raw.lower())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"unknown kind {raw!r}") from None
+
+
+def _badge_label(status: TargetStatus) -> str:
+    """`epic node`, `floonet relay` — the network and the role, not the host name,
+    which the embedding page almost always prints beside the badge already."""
+    network = "epic" if status.target.chain is Chain.MAINNET else status.target.chain.value
+    role = {Kind.NODE: "node", Kind.EPICBOX: "epicbox", Kind.POOL: "pool"}[status.target.kind]
+    return f"{network} {role}"
 
 
 def _severity_or_400(raw: str) -> Severity:

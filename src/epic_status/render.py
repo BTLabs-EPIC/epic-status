@@ -859,6 +859,73 @@ def render_api(*, settings: Settings) -> str:
         },
         {
             "method": "GET",
+            "path": "/api/v1/events.json",
+            "anchor": "events",
+            "tag": "incidents",
+            "why": (
+                "The incident log: outages, reorgs, forks, stalls and certificates close "
+                "to expiry. One entry per incident; `ended_at` is null while it lasts."
+            ),
+            "params": [
+                {"name": "min=warn", "what": "Drop routine one-block reorgs and notices."},
+                {"name": "limit=50", "what": "Up to 200, newest first."},
+                {"name": "chain=floonet", "what": "The test network instead of mainnet."},
+            ],
+            "caption": "What is still going on",
+            "example": (
+                f"curl -s '{base}/api/v1/events.json?min=warn' \\\n"
+                "  | python3 -c 'import sys,json; "
+                "[print(e[\"kind\"], e[\"subject\"]) for e in json.load(sys.stdin)"
+                "[\"events\"] if e[\"ended_at\"] is None]'"
+            ),
+            "returns": (
+                "{\n"
+                '  "chain": "mainnet",\n'
+                '  "min_severity": "warn",\n'
+                '  "events": [{\n'
+                '    "kind": "down", "severity": "warn",\n'
+                '    "subject": "node.example.org:3413", "detail": "timed out",\n'
+                '    "started_at": "2026-09-29T20:14:05Z", "ended_at": null, ...\n'
+                "  }]\n"
+                "}"
+            ),
+        },
+        {
+            "method": "GET",
+            "path": "/feed.atom",
+            "anchor": "feed",
+            "tag": "subscribe",
+            "why": (
+                "The same log as Atom, for a feed reader or a feed-to-chat bot. An "
+                "incident is one entry, updated in place when it resolves."
+            ),
+            "params": [
+                {"name": "min=info", "what": "Include one-block reorgs and notices."},
+                {"name": "chain=floonet", "what": "The test network instead of mainnet."},
+            ],
+            "caption": "Newest entry",
+            "example": f"curl -s {base}/feed.atom | grep -m1 '<title>Down'",
+            "returns": "<title>Down — node.example.org:3413</title>",
+        },
+        {
+            "method": "GET",
+            "path": "/badge/{id}.svg",
+            "anchor": "badge",
+            "tag": "embed",
+            "why": (
+                "An SVG badge with a target's state and 30-day uptime, for a README. "
+                "Drawn here, so embedding it discloses readers to nobody else."
+            ),
+            "params": [
+                {"name": "kind=epicbox", "what": "When a node and a relay share an id."},
+                {"name": "label=my node", "what": "Replace the left-hand text."},
+            ],
+            "caption": "Markdown",
+            "example": f"![status]({base}/badge/node.epiccash.com.svg)",
+            "returns": "epic node | healthy · 99.97%",
+        },
+        {
+            "method": "GET",
             "path": "/api/v1/health",
             "anchor": "health",
             "tag": "this service",
