@@ -3508,3 +3508,199 @@ input[data-state='failed'] {
     display: none;
   }
 }
+
+
+/* ------------------------------------------------------------- incident log
+
+   One line per incident, on a hairline, like the mobile board rows: the log is read
+   top to bottom for "is it over", so the outcome word sits at the end of the line where
+   the eye lands. Severity tints the kind label and, for an ongoing incident, the dot —
+   and is also always stated in words, so it survives a monochrome screenshot. */
+.events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.event {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    'when outcome'
+    'what what';
+  gap: var(--sp-4) var(--sp-16);
+  padding: var(--sp-12) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.event-when {
+  grid-area: when;
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.event-what {
+  grid-area: what;
+  min-width: 0;
+}
+
+.event-title {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+  align-items: baseline;
+}
+
+.event-kind {
+  font-size: var(--t-small);
+  font-weight: 600;
+}
+
+.event-subject {
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  overflow-wrap: anywhere;
+}
+
+.event-detail {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--t-small);
+  color: var(--ink-dim);
+  max-width: 72ch;
+  overflow-wrap: anywhere;
+}
+
+.event-outcome {
+  grid-area: outcome;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-6);
+  font-size: var(--t-small);
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.event-for {
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.sev-warn .event-kind {
+  color: var(--warn-ink);
+}
+
+.sev-bad .event-kind {
+  color: var(--danger-ink);
+}
+
+/* Resolved and informational entries stay neutral: a log of finished incidents is
+   history, and only what is still happening earns a saturated mark. */
+.event.is-ongoing .event-state {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.event.is-ongoing .dot {
+  align-self: center;
+  background: var(--warn-dot);
+  box-shadow: 0 0 0 3px var(--warn-bg);
+}
+
+.event.is-ongoing.sev-bad .dot {
+  background: var(--danger-dot);
+  box-shadow: 0 0 0 3px var(--danger-bg);
+}
+
+.event.is-ongoing.sev-info .dot {
+  background: var(--info-dot);
+  box-shadow: 0 0 0 3px var(--info-bg);
+}
+
+@media (min-width: 720px) {
+  .event {
+    grid-template-columns: 11rem minmax(0, 1fr) auto;
+    grid-template-areas: 'when what outcome';
+    align-items: baseline;
+  }
+}
+
+/* ---------------------------------------------------------------- the chain */
+
+.chain-lead {
+  margin: 0 0 var(--sp-8);
+  max-width: 62ch;
+  font-size: var(--t-body);
+  line-height: 1.55;
+}
+
+.chain-lead strong {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.chain-sub {
+  margin: 0 0 var(--sp-16);
+  max-width: 62ch;
+  font-size: var(--t-small);
+  color: var(--ink-dim);
+}
+
+/* Square and hairlined: this is data, and the system keeps radii for cards and chips. */
+.algos {
+  width: 100%;
+  max-width: 40rem;
+  border-collapse: collapse;
+  font-size: var(--t-small);
+  margin-bottom: var(--sp-8);
+}
+
+.algos th,
+.algos td {
+  padding: var(--sp-8) var(--sp-12) var(--sp-8) 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.algos thead th {
+  font-weight: 500;
+  color: var(--ink-dim);
+  font-size: var(--t-micro);
+}
+
+.algos tbody th {
+  font-weight: 600;
+}
+
+.algos .num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.algos tr > :last-child {
+  padding-right: 0;
+}
+
+/* --------------------------------------------------------------- providers */
+
+.providers {
+  list-style: none;
+  margin: 0 0 var(--sp-8);
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-8) var(--sp-24);
+  font-size: var(--t-small);
+}
+
+.provider-count {
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+}

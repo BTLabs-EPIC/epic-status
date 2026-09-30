@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -38,13 +38,14 @@ from . import admin_routes, schemas
 from .config import Settings, load_seed_targets
 from .config import settings as get_settings
 from .db import Database
-from .models import Chain, Kind, Snapshot, State, TargetStatus
+from .models import Chain, Event, Kind, Severity, Snapshot, State, TargetStatus
 from .net import build_client
 from .poller import Poller
 from .render import (
     probe_url,
     render_api,
     render_board,
+    render_feed,
     render_history,
     render_submit,
 )
@@ -54,6 +55,11 @@ from .web import client_address, cors, json_response, security_headers, stamp
 log = logging.getLogger("epic_status.api")
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+_HISTORY_EVENTS = 50
+"""Incidents shown on /history. The JSON route and the feed page further back."""
+
+_FEED_EVENTS = 50
 
 _VALIDATOR_INTERVAL_S = 15.0
 """How often pending submissions are checked. Slow on purpose: a pending submission
@@ -272,11 +278,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             snapshot=snap,
             settings=settings,
             bars=bars,
+            events=service.db.events(selected, limit=_HISTORY_EVENTS),
             chain=selected,
             chains=service.chains(),
         )
         return HTMLResponse(
             html, headers={"cache-control": "no-store", **security_headers()}
+        )
+
+    @app.api_route("/feed.atom", methods=["GET", "HEAD"], include_in_schema=False)
+    async def feed(
+        request: Request,
+        chain: str = "mainnet",
+        min_severity: Annotated[str, Query(alias="min")] = "warn",
+    ) -> Response:
+        """The incident log as Atom. `?min=info` includes routine one-block reorgs and
+        certificate notices; the default leaves them out, because a feed that posts
+        every orphan race is a feed people unsubscribe from."""
+        selected = _chain_or_404(chain)
+        severity = _severity_or_400(min_severity)
+        events = service.db.events(selected, limit=_FEED_EVENTS, min_severity=severity)
+        body = render_feed(
+            events=events,
+            settings=settings,
+            chain=selected,
+            self_url=f"{settings.site_url.rstrip('/')}{request.url.path}"
+            + (f"?{request.url.query}" if request.url.query else ""),
+        )
+        return Response(
+            body,
+            media_type="application/atom+xml",
+            headers={
+                # A feed reader polls; a minute of caching costs nothing here, since
+                # an incident is minutes long by construction.
+                "cache-control": "public, max-age=60",
+                **cors(),
+                **security_headers(),
+            },
         )
 
     @app.api_route(
@@ -489,6 +527,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
         )
 
+    @app.head("/api/v1/events.json", include_in_schema=False)
+    @app.get(
+        "/api/v1/events.json",
+        tags=["status"],
+        summary="The incident log",
+        description=(
+            "Outages, reorgs, forks, chain stalls and certificates close to expiry, "
+            "newest first. A condition is one entry from start to end — `ended_at` is "
+            "null while it is ongoing — and a reorg is an instant with its `depth`.\n\n"
+            "`?min=warn` drops routine one-block reorgs and certificate notices; "
+            "`?min=bad` leaves forks and stalls only. Also available as Atom at "
+            "`/feed.atom`, which defaults to `warn`."
+        ),
+        responses={200: {"model": schemas.EventList}},
+    )
+    async def events_json(
+        chain: str = "mainnet",
+        min_severity: Annotated[str, Query(alias="min")] = "info",
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    ) -> Response:
+        selected = _chain_or_404(chain)
+        severity = _severity_or_400(min_severity)
+        events = service.db.events(selected, limit=limit, min_severity=severity)
+        return json_response(
+            {
+                "generated_at": stamp(datetime.now(UTC)),
+                "chain": selected.value,
+                "min_severity": severity.value,
+                "events": [_serialise_event(e) for e in events],
+            }
+        )
+
     @app.head("/api/v1/health", include_in_schema=False)
     @app.get(
         "/api/v1/health",
@@ -668,6 +738,34 @@ def _chain_or_404(raw: str) -> Chain:
         ) from None
 
 
+def _severity_or_400(raw: str) -> Severity:
+    """Parse `?min=`, or refuse. A typo silently widening a feed to every notice is
+    the kind of quiet wrongness this service avoids everywhere else."""
+    try:
+        return Severity(raw.lower())
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown severity {raw!r}; use one of {[s.value for s in Severity]}",
+        ) from None
+
+
+def _serialise_event(event: Event) -> dict[str, Any]:
+    return {
+        "id": event.id,
+        "kind": event.kind.value,
+        "severity": event.severity.value,
+        "subject": event.subject,
+        "target": event.target_slug,
+        "detail": event.detail,
+        "depth": event.depth,
+        "started_at": stamp(event.started_at),
+        "ended_at": stamp(event.ended_at),
+        "duration_s": event.duration_s,
+        "measured_from": event.prober_id,
+    }
+
+
 def _probe_origins(snapshot: Snapshot | None) -> list[str]:
     """The origins the board's own rows point at, for `connect-src`.
 
@@ -762,6 +860,9 @@ def _serialise(snap: Snapshot, settings: Settings) -> dict[str, Any]:
             "released_node_version": net.released_node_version,
             "nodes_current": net.nodes_current,
             "nodes_versioned": net.nodes_versioned,
+            "activity": (
+                net.activity.model_dump(mode="json") if net.activity is not None else None
+            ),
         },
         "nodes": [_serialise_target(s) for s in snap.nodes],
         "epicbox": [_serialise_target(s) for s in snap.epicbox],

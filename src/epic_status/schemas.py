@@ -15,6 +15,8 @@ has to be updated — and the field names here are the ones documented to consum
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -280,6 +282,14 @@ class Network(BaseModel):
         "get_version, so this is routinely lower than nodes_total.",
         examples=[3],
     )
+    activity: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Block intervals, the per-algorithm mix and difficulty, and reorgs over the "
+            "last day, from block headers on the public API. Null until enough headers "
+            "have been collected."
+        ),
+    )
 
 
 class StatusMeta(BaseModel):
@@ -396,6 +406,38 @@ class PoolList(BaseModel):
     pools: list[str] = Field(
         default_factory=list, examples=[["epicmine.io", "epic.iniaku.my.id"]]
     )
+
+
+class EventOut(BaseModel):
+    """One incident. Conditions open and close; a reorg is an instant."""
+
+    id: int = Field(examples=[412])
+    kind: str = Field(
+        description="`down`, `reorg`, `fork`, `stall` or `cert_expiring`.",
+        examples=["down"],
+    )
+    severity: str = Field(description="`info`, `warn` or `bad`.", examples=["warn"])
+    subject: str = Field(
+        description="A host, or the chain itself.", examples=["node.epicnet.us:3413"]
+    )
+    target: str | None = Field(
+        None, description="The target's `id`, while it is still monitored."
+    )
+    detail: str | None = Field(None, examples=["connection timed out"])
+    depth: int | None = Field(None, description="Blocks replaced, for a reorg.")
+    started_at: str = Field(examples=["2026-09-29T20:14:05Z"])
+    ended_at: str | None = Field(
+        None, description="Null while ongoing. Equal to `started_at` for a reorg."
+    )
+    duration_s: int | None = None
+    measured_from: str = Field(examples=["btlabs-lon"])
+
+
+class EventList(BaseModel):
+    generated_at: str
+    chain: str
+    min_severity: str
+    events: list[EventOut]
 
 
 class HealthResponse(BaseModel):

@@ -4,18 +4,149 @@
 
 {% block content %}
 <div class="page-head">
-  <h1>Uptime history</h1>
-  <p>One bar per day, ninety days. Grey is no data.</p>
+  <h1>History</h1>
+  <p>What happened, how the chain is moving, and ninety days of uptime per host.</p>
 </div>
 
+{#
+  Incidents first. A reader who opens History during or after an outage came to find
+  out when it started and whether it is over; the uptime bars answer a slower question.
+#}
+<section class="group group-primary" aria-labelledby="incidents">
+  <div class="group-head">
+    <h2 id="incidents">Incidents</h2>
+    <span class="group-count">
+      <a href="/feed.atom{{ chain_query }}" type="application/atom+xml">Atom feed</a>
+    </span>
+  </div>
+  {% if events %}
+  <ol class="events">
+    {% for e in events %}
+    <li class="event sev-{{ e.severity.value }}{% if e.ongoing %} is-ongoing{% endif %}" id="event-{{ e.id }}">
+      <time class="event-when" datetime="{{ e.started_at | rfc3339 }}">{{ e.started_at | when }}</time>
+      <div class="event-what">
+        <p class="event-title">
+          <span class="event-kind">{{ e.kind | event_label }}</span>
+          <span class="event-subject">{{ e.subject }}</span>
+        </p>
+        {% if e.detail %}<p class="event-detail">{{ e.detail }}</p>{% endif %}
+      </div>
+      {#
+        The outcome as a word, never only as a colour. A reorg is an instant, so it has
+        no duration to report — only the depth, which is already in the detail.
+      #}
+      <p class="event-outcome">
+        {% if e.kind.value == 'reorg' %}
+        <span class="event-state">Instant</span>
+        {% elif e.ongoing %}
+        <span class="dot" aria-hidden="true"></span><span class="event-state">Ongoing</span>
+        {% else %}
+        <span class="event-state">Resolved</span>
+        <span class="event-for">after {{ e.duration_s | duration }}</span>
+        {% endif %}
+      </p>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="prose prose-tight">Nothing recorded. Outages, reorgs, forks, stalls and certificates close to expiry are logged here as they happen.</p>
+  {% endif %}
+</section>
+
+<section class="group" aria-labelledby="chain">
+  <div class="group-head">
+    <h2 id="chain">The chain</h2>
+    {% if activity %}
+    <span class="group-count">last {{ activity.window_blocks | thousands }} blocks</span>
+    {% endif %}
+  </div>
+  {% if activity %}
+  {#
+    Sentences first, then the one table that is genuinely tabular. Four tiles of equal
+    numbers would ask the reader to work out which one matters; the sentence says it.
+  #}
+  <p class="chain-lead">
+    A block every <strong>{{ activity.median_interval_s | duration }}</strong> on the median,
+    against a {{ activity.target_interval_s }}s target.
+    The longest wait was {{ activity.longest_gap_s | duration }}{% if activity.longest_gap_height %}, ending at block {{ activity.longest_gap_height | thousands }}{% endif %}.
+  </p>
+  <p class="chain-sub">
+    {% if activity.reorgs_24h == 0 %}
+    No blocks were replaced in the last 24 hours.
+    {% elif activity.reorgs_24h == 1 %}
+    One reorg in the last 24 hours, {{ activity.deepest_reorg_24h }} block{{ '' if activity.deepest_reorg_24h == 1 else 's' }} deep.
+    {% else %}
+    {{ activity.reorgs_24h }} reorgs in the last 24 hours, the deepest {{ activity.deepest_reorg_24h }} block{{ '' if activity.deepest_reorg_24h == 1 else 's' }}.
+    {% endif %}
+    Read from block headers on the public API; a reorg is a block this page had already seen at the tip being replaced.
+  </p>
+  {% if activity.algos %}
+  <table class="algos">
+    <caption class="sr-only">Blocks and difficulty by mining algorithm</caption>
+    <thead>
+      <tr>
+        <th scope="col">Algorithm</th>
+        <th scope="col" class="num">Blocks</th>
+        <th scope="col" class="num">Share</th>
+        <th scope="col" class="num">Difficulty</th>
+        <th scope="col" class="num">Change</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in activity.algos %}
+      <tr>
+        <th scope="row">{{ a.algo }}</th>
+        <td class="num">{{ a.blocks | thousands }}</td>
+        <td class="num">{{ (a.share * 100) | round | int }}%</td>
+        <td class="num">{{ a.difficulty | thousands }}</td>
+        <td class="num">
+          {%- if a.difficulty_change is none -%}—
+          {%- else -%}{{ '+' if a.difficulty_change >= 0 else '−' }}{{ '%.1f' | format((a.difficulty_change | abs) * 100) }}%
+          {%- endif -%}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="prose prose-tight">Difficulty is the step in each algorithm's cumulative counter at the newest block; change is against the oldest block in the window.</p>
+  {% endif %}
+  {% else %}
+  <p class="prose prose-tight">Collecting block headers. This fills in over the first few minutes.</p>
+  {% endif %}
+</section>
+
+{% if network and network.providers %}
+{#
+  Provider concentration. A property of the fleet, not an answer to "can I transact",
+  which is why it lives here and not on the board.
+#}
+<section class="group" aria-labelledby="hosting">
+  <div class="group-head">
+    <h2 id="hosting">Where it runs</h2>
+  </div>
+  {% set total = network.providers.values() | sum %}
+  <ul class="providers">
+    {% for name, count in network.providers.items() %}
+    <li><span class="provider-name">{{ name }}</span> <span class="provider-count">{{ count }} of {{ total }}</span></li>
+    {% endfor %}
+  </ul>
+  <p class="prose prose-tight">By hosting provider, from registry data. One provider's outage takes every host it runs with it.</p>
+</section>
+{% endif %}
+
+<section class="group" aria-labelledby="uptime">
+  <div class="group-head">
+    <h2 id="uptime">Uptime</h2>
+    <span class="group-count">one bar per day · grey is no data</span>
+  </div>
 {% if rows %}
 {% for status in rows %}
 <div class="card">
   <div class="group-head group-head-bare">
-    <h2 class="host-heading">
+    <h3 class="host-heading">
       {{ status.target.display_host }}
       <span class="badge">{{ status.target.kind.value }}</span>
-    </h2>
+    </h3>
     <span class="group-count">
       1h {{ status.uptime_1h | pct }} · 24h {{ status.uptime_24h | pct }} · 30d {{ status.uptime_30d | pct }}
     </span>
@@ -40,4 +171,5 @@
 {% else %}
 <p class="prose">Nothing has been checked yet. The first sweep is still running.</p>
 {% endif %}
+</section>
 {% endblock %}

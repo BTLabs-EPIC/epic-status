@@ -204,15 +204,34 @@ class VersionProbe(BaseModel):
     error: str | None = None
 
 
-class TipAge(BaseModel):
-    """`get_header` on the tip, for "is the chain actually moving".
+class BlockHeader(BaseModel):
+    """One block header, as the foreign API's `get_header` returns it.
 
-    A node can answer `get_tip` flawlessly while stuck. Height alone cannot tell
-    you whether the whole network has stalled or just this node.
+    `total_difficulty` is cumulative and per algorithm. Epic advances all four
+    counters on every block whichever algorithm mined it, so the difference between
+    two consecutive headers is the current difficulty of each algorithm — which is
+    what the chain panel shows, without needing an owner API or a hashrate model.
+    """
+
+    height: int
+    hash: str
+    previous: str
+    mined_at: datetime
+    proof: str | None = None
+    """Which algorithm solved the block: `Cuckoo`, `RandomX` or `ProgPow` on mainnet."""
+    total_difficulty: Difficulty = Field(default_factory=Difficulty)
+
+
+class HeaderProbe(BaseModel):
+    """`get_header` at one height.
+
+    Used for two things that are both properties of the chain rather than of a node:
+    how old the newest block is, and — by keeping the canonical header at every recent
+    height — whether a block this service already saw has since been replaced.
     """
 
     ok: bool
-    timestamp: datetime | None = None
+    header: BlockHeader | None = None
     error: str | None = None
 
 
@@ -337,6 +356,104 @@ class Check(BaseModel):
     latency_ms: int | None = None
 
 
+# --------------------------------------------------------------------------- events
+
+
+class EventKind(str, enum.Enum):
+    """Something that started, and usually later ended, and is worth a line in the log.
+
+    Deliberately short. A status page that logs every amber flicker produces a feed
+    nobody reads; each of these is a change a reader could act on or would ask about.
+    """
+
+    DOWN = "down"
+    """A target reached `down`. Ends when it leaves it."""
+    REORG = "reorg"
+    """A block this service had already seen as the fleet tip was replaced. Instant:
+    started and ended in the same moment, with the depth in the detail."""
+    FORK = "fork"
+    """A tip-hash conflict that survived confirmation. Ends when the fleet agrees."""
+    STALL = "stall"
+    """No new block for far longer than the target interval. Ends on the next block."""
+    CERT_EXPIRING = "cert_expiring"
+    """A relay certificate inside the warning window. Ends when it is renewed."""
+
+
+class Severity(str, enum.Enum):
+    INFO = "info"
+    WARN = "warn"
+    BAD = "bad"
+
+    @property
+    def rank(self) -> int:
+        return {"info": 0, "warn": 1, "bad": 2}[self.value]
+
+
+class Event(BaseModel):
+    """One incident-log entry."""
+
+    id: int | None = None
+    chain: Chain
+    kind: EventKind
+    severity: Severity
+    subject: str
+    """What it happened to, as a reader would name it: a host, or the chain itself.
+    Stored as text rather than only as a target id, so the entry still reads correctly
+    after the target is removed."""
+    target_slug: str | None = None
+    detail: str | None = None
+    depth: int | None = None
+    """Blocks replaced, for a reorg. None for every other kind."""
+    prober_id: str
+    started_at: datetime
+    ended_at: datetime | None = None
+
+    @property
+    def ongoing(self) -> bool:
+        return self.ended_at is None
+
+    @property
+    def duration_s(self) -> int | None:
+        if self.ended_at is None:
+            return None
+        return max(0, int((self.ended_at - self.started_at).total_seconds()))
+
+
+# ----------------------------------------------------------------------- chain panel
+
+
+class AlgoActivity(BaseModel):
+    """One proof-of-work algorithm over the panel's window."""
+
+    algo: str
+    """As a reader knows it: `RandomX`, `ProgPow`, `Cuckatoo`."""
+    blocks: int
+    share: float
+    difficulty: int | None = None
+    """Current per-block difficulty: the step in this algorithm's cumulative counter
+    between the two newest headers."""
+    difficulty_change: float | None = None
+    """Fractional change against the oldest header in the window, or None when the
+    window is too short to say anything."""
+
+
+class ChainActivity(BaseModel):
+    """Is the chain moving normally — derived from recent headers, not from any node's
+    opinion of itself."""
+
+    window_blocks: int
+    window_s: int
+    median_interval_s: int | None = None
+    mean_interval_s: int | None = None
+    longest_gap_s: int | None = None
+    longest_gap_height: int | None = None
+    """The height of the block that *ended* the longest gap."""
+    target_interval_s: int = 60
+    algos: list[AlgoActivity] = Field(default_factory=list)
+    reorgs_24h: int = 0
+    deepest_reorg_24h: int = 0
+
+
 class TargetStatus(BaseModel):
     """A target plus its current computed verdict. This is what the board renders
     and what the JSON API serialises."""
@@ -442,6 +559,10 @@ class NetworkSummary(BaseModel):
     """Nodes that reported any version. The denominator for `nodes_current`; a node
     whose foreign API is closed answers `get_tip` but not `get_version`, so this is
     routinely smaller than `nodes_total`."""
+
+    activity: ChainActivity | None = None
+    """Block intervals, algorithm mix and difficulty from recent headers. None until
+    enough headers have been collected to say anything."""
 
 
 class Snapshot(BaseModel):

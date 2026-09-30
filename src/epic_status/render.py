@@ -26,7 +26,17 @@ from markupsafe import Markup
 from . import icons, releases
 from .config import Settings
 from .flags import flag, flag_title
-from .models import Chain, Kind, Snapshot, State, Target, TargetStatus
+from .models import (
+    Chain,
+    Event,
+    EventKind,
+    Kind,
+    Severity,
+    Snapshot,
+    State,
+    Target,
+    TargetStatus,
+)
 from .probes.pool import ADAPTERS
 from .score import version_behind
 
@@ -113,7 +123,8 @@ def _environment() -> Environment:
     """
     env = Environment(
         loader=FileSystemLoader(TEMPLATE_DIR),
-        autoescape=select_autoescape(["html"]),
+        # XML too: the Atom feed carries hostnames and operator-supplied text.
+        autoescape=select_autoescape(["html", "xml"]),
         undefined=StrictUndefined,
         trim_blocks=True,
         lstrip_blocks=True,
@@ -126,6 +137,10 @@ def _environment() -> Environment:
     env.filters["age_clock"] = _age_clock
     env.filters["utc"] = _utc
     env.filters["day"] = _day
+    env.filters["when"] = _when
+    env.filters["rfc3339"] = _rfc3339
+    env.filters["duration"] = _duration
+    env.filters["event_label"] = lambda k: _EVENT_LABEL.get(k, str(k))
     env.filters["state_label"] = lambda s: _STATE_LABEL.get(s, "Unknown")
     env.filters["flag"] = lambda c: Markup(flag(c))
     env.filters["flag_title"] = flag_title
@@ -266,6 +281,46 @@ def _day(value: datetime | None) -> str:
     if value is None:
         return "unknown"
     return value.astimezone(UTC).strftime("%Y-%m-%d")
+
+
+def _when(value: datetime | None) -> str:
+    """Date and minute, for an incident: `2026-09-29 20:14 UTC`.
+
+    The log spans days, so a time of day alone is ambiguous, and seconds are noise at
+    the resolution anyone reads an incident log.
+    """
+    if value is None:
+        return "unknown"
+    return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _rfc3339(value: datetime | None) -> str:
+    """For Atom and `<time datetime>`."""
+    if value is None:
+        return ""
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _duration(seconds: int | None) -> str:
+    """Two units at most: `42s`, `4m 12s`, `2h 03m`, `3d 4h`."""
+    if seconds is None:
+        return "—"
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m {seconds % 60:02d}s"
+    if seconds < 86400:
+        return f"{seconds // 3600}h {(seconds % 3600) // 60:02d}m"
+    return f"{seconds // 86400}d {(seconds % 86400) // 3600}h"
+
+
+_EVENT_LABEL = {
+    EventKind.DOWN: "Down",
+    EventKind.REORG: "Reorg",
+    EventKind.FORK: "Fork",
+    EventKind.STALL: "Chain stalled",
+    EventKind.CERT_EXPIRING: "Certificate expiring",
+}
 
 
 def _epoch_ms(value: datetime | None) -> str:
@@ -594,6 +649,7 @@ def render_history(
     snapshot: Snapshot | None,
     settings: Settings,
     bars: dict[str, list[tuple[str, float | None]]],
+    events: Sequence[Event] = (),
     chain: Chain = Chain.MAINNET,
     chains: Sequence[Chain] = (),
 ) -> str:
@@ -605,7 +661,43 @@ def render_history(
     )
     context["bars"] = bars
     context["bar_class"] = _bar_class
+    context["events"] = list(events)
+    context["activity"] = snapshot.network.activity if snapshot else None
+    context["Severity"] = Severity
     return _environment().get_template("history.html").render(**context)
+
+
+def render_feed(
+    *,
+    events: Sequence[Event],
+    settings: Settings,
+    chain: Chain,
+    self_url: str,
+) -> str:
+    """The incident log as Atom.
+
+    One entry per incident, keyed by its database id, so a feed reader shows an outage
+    once and then updates the same entry when it resolves rather than posting twice.
+    This is the alerting path the project can offer without sending anything itself:
+    a reader, or a feed-to-chat bot, pulls it.
+    """
+    base = settings.site_url.rstrip("/")
+    host = base.split("://", 1)[-1].split("/", 1)[0]
+    updated = max(
+        ((e.ended_at or e.started_at) for e in events), default=datetime.now(UTC)
+    )
+    context = {
+        "site_name": settings.site_name,
+        "chain": chain,
+        "events": list(events),
+        "base": base,
+        "tag_host": host,
+        "self_url": self_url,
+        "history_url": f"{base}/history"
+        + ("" if chain is Chain.MAINNET else f"?chain={chain.value}"),
+        "updated": updated,
+    }
+    return _environment().get_template("feed.xml").render(**context)
 
 
 def _country_options() -> list[tuple[str, str]]:

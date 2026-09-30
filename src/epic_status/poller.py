@@ -32,7 +32,9 @@ from .db import Database, parse_iso
 from .geo import lookup as geo_lookup
 from .geo import merge as geo_merge
 from .models import (
+    BlockHeader,
     Chain,
+    ChainActivity,
     EpicboxProbe,
     GeoInfo,
     Kind,
@@ -54,8 +56,10 @@ from .net import (
     tcp_probe,
 )
 from .probes.epicbox import probe_relay
-from .probes.node import probe_tip, probe_tip_age, probe_version
+from .probes.node import probe_header, probe_tip, probe_version
 from .probes.pool import probe_pool
+from .chain import ChainTracker, HeaderFetch, canonical_tip
+from .events import EventTracker
 from .score import (
     ForkDetector,
     epicbox_state,
@@ -116,10 +120,14 @@ class Poller:
         self._next_pool: dict[int, float] = {}
         self._last_pool: dict[int, tuple[float, PoolProbe]] = {}
         self._pool_persisted: dict[int, float] = {}
-        # Per chain: "how old is the newest block on *this* network". A single value
-        # was written by whichever chain refreshed last, and published as the age of
-        # the tip on both.
-        self._tip_age: dict[Chain, tuple[float, datetime]] = {}
+        # Per chain: the recent canonical headers, which is where tip age, the chain
+        # panel and reorg detection all come from. See `chain`.
+        self._chains: dict[Chain, ChainTracker] = {}
+        self._syncing: set[Chain] = set()
+        self._activity: dict[Chain, tuple[float, ChainActivity | None]] = {}
+        self.events = EventTracker(
+            db, settings.prober_id, cert_warn_days=settings.thresholds.cert_warn_days
+        )
         self._next_prune = 0.0
         self._background: set[asyncio.Task[None]] = set()
 
@@ -224,11 +232,13 @@ class Poller:
                 # hosts.
                 continue
 
-            tip = fleet_tip({t.slug: node_probes[t.slug] for t in chain_nodes})
-            forked, fork_detail = self._fork_for(chain).observe(
-                {t.slug: node_probes[t.slug] for t in chain_nodes}
-            )
-            self._spawn(self._refresh_tip_age(chain_nodes, node_probes, tip, now))
+            chain_probes = {t.slug: node_probes[t.slug] for t in chain_nodes}
+            tip = fleet_tip(chain_probes)
+            forked, fork_detail = self._fork_for(chain).observe(chain_probes)
+            canonical = canonical_tip(chain_probes.values())
+            if canonical is not None and chain not in self._syncing:
+                self._syncing.add(chain)
+                self._spawn(self._sync_chain(chain, chain_nodes, node_probes, canonical))
 
             node_statuses = [
                 self._node_status(t, node_probes[t.slug], tip) for t in chain_nodes
@@ -250,6 +260,16 @@ class Poller:
                 chain=chain,
             )
             all_statuses.extend(node_statuses + relay_statuses + pool_statuses)
+            try:
+                self.events.observe(
+                    chain,
+                    node_statuses + relay_statuses + pool_statuses,
+                    snapshots[chain].network,
+                )
+            except Exception:
+                # The log is a record of the board, not a precondition for it. A write
+                # failure here must not stop this sweep's snapshot being published.
+                log.exception("event tracking failed for %s", chain.value)
 
         # Persistence, reaping and history are per target and must see every row
         # exactly once, so they run over the union rather than inside the loop.
@@ -432,52 +452,83 @@ class Poller:
         if result.ok:
             self.db.set_node_version(target.id, result.node_version)
 
-    async def _refresh_tip_age(
+    def _tracker(self, chain: Chain) -> ChainTracker:
+        tracker = self._chains.get(chain)
+        if tracker is None:
+            tracker = ChainTracker(self.db, chain)
+            self._chains[chain] = tracker
+        return tracker
+
+    async def _sync_chain(
         self,
+        chain: Chain,
         nodes: list[Target],
         probes: dict[str, NodeProbe],
-        tip: int | None,
-        now: float,
+        tip: tuple[int, str],
     ) -> None:
-        """Ask exactly one healthy node for the tip block's timestamp.
+        """Bring one chain's header record up to the fleet tip, from one node.
 
-        "The chain is moving" is a property of the chain, not of a node, so asking
-        every node would be N requests for one fact. The node chosen is the fastest
-        one that agrees with the fleet tip.
+        "The chain is moving" and "a block was replaced" are properties of the chain,
+        not of a node, so asking every node would be N requests for one fact. The
+        source is a node whose tip hash is the canonical one — a node on a different
+        branch would answer truthfully about the wrong chain — preferring verified
+        hosts, then the fastest. In steady state this is one `get_header` per new
+        block, about one a minute.
 
-        `nodes` is one chain's nodes and the cached answer is keyed by that chain:
-        the age of floonet's newest block says nothing about mainnet's, and a single
-        shared value was simply whichever chain refreshed most recently.
+        Guarded by `_syncing` so a slow walk is never overlapped by the next sweep's.
         """
         assert self._client is not None
-        if not nodes:
-            return
-        chain = nodes[0].chain
-        cached = self._tip_age.get(chain)
-        if tip is None or (cached and now < cached[0]):
-            return
-        candidates = sorted(
-            (
-                t
-                for t in nodes
-                if probes[t.slug].ok
-                and probes[t.slug].height == tip
-                and probes[t.slug].latency_ms is not None
-            ),
-            key=lambda t: probes[t.slug].latency_ms or 10**9,
-        )
-        for target in candidates[:2]:
-            resolved = await self._resolve(target.endpoint)
-            if isinstance(resolved, TargetRejected):
-                continue
-            async with self._sem:
-                result = await probe_tip_age(self._client, resolved, tip)
-            if result.ok and result.timestamp is not None:
-                self._tip_age[chain] = (
-                    now + self.settings.cadence.node_header_s,
-                    result.timestamp,
+        try:
+            height, tip_hash = tip
+            sources = sorted(
+                (
+                    t
+                    for t in nodes
+                    if probes[t.slug].ok and probes[t.slug].tip_hash == tip_hash
+                ),
+                key=lambda t: (not t.verified, probes[t.slug].latency_ms or 10**9),
+            )
+            for target in sources[:2]:
+                resolved = await self._resolve(target.endpoint)
+                if isinstance(resolved, TargetRejected):
+                    continue
+                reorg = await self._tracker(chain).sync(
+                    self._header_fetch(resolved), height, tip_hash
                 )
+                if reorg is not None:
+                    self.events.record_reorg(reorg, source=target.display_host)
                 return
+        finally:
+            self._syncing.discard(chain)
+
+    def _header_fetch(self, resolved: Resolved) -> HeaderFetch:
+        """`get_header` against one pinned address, under the shared concurrency limit."""
+        client = self._client
+        assert client is not None
+
+        async def fetch(height: int) -> BlockHeader | None:
+            async with self._sem:
+                result = await probe_header(client, resolved, height)
+            return result.header if result.ok else None
+
+        return fetch
+
+    def _chain_activity(self, chain: Chain) -> ChainActivity | None:
+        """The chain panel's numbers, recomputed at most once a minute.
+
+        They move once per block. Recomputing from a day of headers every five
+        seconds would be the second most expensive thing a sweep does, for a figure
+        that could not have changed.
+        """
+        now = asyncio.get_running_loop().time()
+        cached = self._activity.get(chain)
+        if cached is not None and cached[0] > now:
+            return cached[1]
+        since = datetime.now(UTC) - timedelta(hours=24)
+        depths = [e.depth or 1 for e in self.db.reorgs_since(chain, since)]
+        value = self._tracker(chain).activity(reorg_depths=depths)
+        self._activity[chain] = (now + _UPTIME_TTL_S, value)
+        return value
 
     async def _refresh_p2p(
         self, nodes: list[Target], probes: dict[str, NodeProbe], now: float
@@ -837,11 +888,14 @@ class Poller:
             (s.tip_hash for s in nodes if s.height == tip and s.tip_hash), None
         )
 
+        # From the newest stored header, which the chain sync keeps within a sweep of
+        # the tip. Per chain: the age of floonet's newest block says nothing about
+        # mainnet's.
         tip_age_s: int | None = None
         tip_mined_at: datetime | None = None
-        cached_age = self._tip_age.get(chain)
-        if cached_age is not None:
-            tip_mined_at = cached_age[1]
+        newest = self._tracker(chain).newest()
+        if newest is not None:
+            tip_mined_at = newest.mined_at
             tip_age_s = max(0, int((datetime.now(UTC) - tip_mined_at).total_seconds()))
 
         providers: dict[str, int] = {}
@@ -891,6 +945,7 @@ class Poller:
             nodes_current=sum(
                 1 for s in nodes if s.node_version and s.node_version == released
             ),
+            activity=self._chain_activity(chain),
         )
         summary.health_score = health_score(
             nodes,

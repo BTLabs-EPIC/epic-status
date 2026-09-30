@@ -38,7 +38,6 @@ class Cadence(BaseModel):
 
     node_tip_s: float = 5.0
     node_version_s: float = 300.0
-    node_header_s: float = 60.0
     node_p2p_s: float = 30.0
     epicbox_s: float = 30.0
     epicbox_cert_s: float = 21600.0

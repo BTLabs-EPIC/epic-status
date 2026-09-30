@@ -27,11 +27,19 @@ version and latency, and nothing else.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any
 
 import httpx
 
-from ..models import Difficulty, NodeProbe, Reason, TipAge, VersionProbe
+from ..models import (
+    BlockHeader,
+    Difficulty,
+    HeaderProbe,
+    NodeProbe,
+    Reason,
+    VersionProbe,
+)
 from ..net import Resolved, classify_http_error, pinned_url
 
 _RPC_PATH = "/v2/foreign"
@@ -227,33 +235,60 @@ async def probe_version(
         return VersionProbe(ok=False, error=message)
 
 
-async def probe_tip_age(
+async def probe_header(
     client: httpx.AsyncClient, resolved: Resolved, height: int
-) -> TipAge:
-    """The tip block's own timestamp, on a one-minute cadence.
+) -> HeaderProbe:
+    """`get_header` at one height: hash, parent, timestamp, algorithm, difficulty.
 
     This is the difference between "this node is answering" and "the chain is
     moving". A node can serve `get_tip` perfectly while the whole network has
-    stalled, and height alone cannot tell you which.
-    """
-    from datetime import datetime
+    stalled, and height alone cannot tell you which. Kept per height, the same
+    header is also how a replaced block — a reorg — becomes visible from outside:
+    the parent a new header names either is, or is not, the block that was seen
+    at that height before.
 
+    About 1.5 KB with the proof. Fetched once per new block, not once per sweep.
+    """
     try:
         response = await _post(
             client, resolved, _rpc("get_header", [height, None, None])
         )
         if response.status_code >= 400:
-            return TipAge(ok=False, error=f"HTTP {response.status_code}")
+            return HeaderProbe(ok=False, error=f"HTTP {response.status_code}")
         payload, error = _unwrap(response.json())
         if payload is None:
-            return TipAge(ok=False, error=error)
-        raw = payload.get("timestamp")
-        if not isinstance(raw, str):
-            return TipAge(ok=False, error="no timestamp in header")
-        return TipAge(ok=True, timestamp=datetime.fromisoformat(raw))
+            return HeaderProbe(ok=False, error=error)
+        raw_time = payload.get("timestamp")
+        block_hash = payload.get("hash")
+        previous = payload.get("previous")
+        found = payload.get("height")
+        if not isinstance(raw_time, str):
+            return HeaderProbe(ok=False, error="no timestamp in header")
+        if not (isinstance(block_hash, str) and isinstance(previous, str)):
+            return HeaderProbe(ok=False, error="no hash in header")
+        if found != height:
+            # A node answering for a different height than was asked is not a header
+            # this service can file under the height it asked about.
+            return HeaderProbe(ok=False, error=f"asked for {height}, got {found}")
+        raw_difficulty = payload.get("total_difficulty")
+        return HeaderProbe(
+            ok=True,
+            header=BlockHeader(
+                height=height,
+                hash=block_hash,
+                previous=previous,
+                mined_at=datetime.fromisoformat(raw_time),
+                proof=_as_str(payload.get("proof")),
+                total_difficulty=(
+                    Difficulty.model_validate(raw_difficulty)
+                    if isinstance(raw_difficulty, dict)
+                    else Difficulty()
+                ),
+            ),
+        )
     except Exception as exc:  # noqa: BLE001
         _, message = classify_http_error(exc)
-        return TipAge(ok=False, error=message)
+        return HeaderProbe(ok=False, error=message)
 
 
 def _as_str(value: Any) -> str | None:

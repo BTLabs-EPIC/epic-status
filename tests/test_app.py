@@ -137,3 +137,72 @@ async def test_admin_login_round_trip(tmp_path: Path) -> None:
         )
         assert good.status_code == 303
         assert "epic_status_admin" in good.cookies
+
+
+
+# ------------------------------------------------------------------- incidents
+
+
+def _record_incidents(service: Service) -> None:
+    from epic_status.models import Event, EventKind, Severity
+
+    now = datetime.now(UTC)
+    service.db.open_event(
+        Event(
+            chain=Chain.MAINNET,
+            kind=EventKind.DOWN,
+            severity=Severity.WARN,
+            subject="node.example.org:3413 <script>",
+            detail="connection timed out",
+            prober_id="test",
+            started_at=now,
+        )
+    )
+    service.db.open_event(
+        Event(
+            chain=Chain.MAINNET,
+            kind=EventKind.REORG,
+            severity=Severity.INFO,
+            subject="Mainnet chain",
+            detail="1 block replaced from height 99",
+            depth=1,
+            prober_id="test",
+            started_at=now,
+            ended_at=now,
+        )
+    )
+
+
+async def test_history_lists_incidents(app: FastAPI, client: httpx.AsyncClient) -> None:
+    _record_incidents(app.state.service)
+    body = (await client.get("/history")).text
+    assert "Incidents" in body
+    assert "Ongoing" in body and "Instant" in body
+    # Subjects come from host names, which come from a public form.
+    assert "<script>" not in body
+
+
+async def test_feed_is_atom_and_defaults_to_warn(
+    app: FastAPI, client: httpx.AsyncClient
+) -> None:
+    _record_incidents(app.state.service)
+    response = await client.get("/feed.atom")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/atom+xml")
+    assert response.text.count("<entry>") == 1
+    assert "&lt;script&gt;" in response.text
+    everything = await client.get("/feed.atom", params={"min": "info"})
+    assert everything.text.count("<entry>") == 2
+
+
+async def test_events_json(app: FastAPI, client: httpx.AsyncClient) -> None:
+    _record_incidents(app.state.service)
+    payload = (await client.get("/api/v1/events.json")).json()
+    kinds = [e["kind"] for e in payload["events"]]
+    assert sorted(kinds) == ["down", "reorg"]
+    reorg = next(e for e in payload["events"] if e["kind"] == "reorg")
+    assert reorg["depth"] == 1 and reorg["ended_at"] is not None
+
+
+async def test_unknown_severity_is_refused(client: httpx.AsyncClient) -> None:
+    assert (await client.get("/feed.atom", params={"min": "warnn"})).status_code == 400

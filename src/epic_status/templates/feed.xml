@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>{{ site_name }} — {{ chain.label }} incidents</title>
+  <subtitle>Outages, reorgs, forks and stalls, as observed from one vantage point.</subtitle>
+  <id>tag:{{ tag_host }},2026:{{ chain.value }}/incidents</id>
+  <link rel="self" type="application/atom+xml" href="{{ self_url }}" />
+  <link rel="alternate" type="text/html" href="{{ history_url }}" />
+  <updated>{{ updated | rfc3339 }}</updated>
+  <author><name>{{ site_name }}</name></author>
+{% for e in events %}
+  <entry>
+    <id>tag:{{ tag_host }},2026:{{ chain.value }}/event/{{ e.id }}</id>
+    <title>{% if e.kind.value != 'reorg' and not e.ongoing %}Resolved: {% endif %}{{ e.kind | event_label }} — {{ e.subject }}</title>
+    <link rel="alternate" type="text/html" href="{{ history_url }}#event-{{ e.id }}" />
+    <published>{{ e.started_at | rfc3339 }}</published>
+    <updated>{{ (e.ended_at or e.started_at) | rfc3339 }}</updated>
+    <category term="{{ e.kind.value }}" />
+    <category term="{{ e.severity.value }}" />
+    <summary type="text">{% if e.detail %}{{ e.detail }}. {% endif %}Started {{ e.started_at | when }}{% if e.kind.value == 'reorg' %}.{% elif e.ongoing %}, ongoing.{% else %}, ended {{ e.ended_at | when }} after {{ e.duration_s | duration }}.{% endif %}</summary>
+  </entry>
+{% endfor %}
+</feed>

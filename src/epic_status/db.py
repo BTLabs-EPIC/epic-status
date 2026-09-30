@@ -28,7 +28,19 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from .models import Chain, Check, GeoInfo, Kind, Source, Target
+from .models import (
+    BlockHeader,
+    Chain,
+    Check,
+    Difficulty,
+    Event,
+    EventKind,
+    GeoInfo,
+    Kind,
+    Severity,
+    Source,
+    Target,
+)
 
 def _sql_in(enum: type[Enum]) -> str:
     """Render an enum as a SQL `IN` list.
@@ -155,6 +167,43 @@ CREATE TABLE IF NOT EXISTS rollup_hourly (
 
 CREATE INDEX IF NOT EXISTS idx_rollup_target_hour
     ON rollup_hourly (target_id, hour DESC);
+
+-- Recent canonical block headers, per chain. Derived — any node can serve them again —
+-- but kept on disk because reorg detection is a comparison with what the tip *used* to
+-- be, and a restart must not forget that. Trimmed to a rolling window of heights.
+CREATE TABLE IF NOT EXISTS headers (
+    chain       TEXT    NOT NULL,
+    height      INTEGER NOT NULL,
+    hash        TEXT    NOT NULL,
+    previous    TEXT    NOT NULL,
+    mined_at    TEXT    NOT NULL,
+    proof       TEXT,
+    difficulty_json TEXT,
+    PRIMARY KEY (chain, height)
+);
+
+-- REAL STATE, like `checks`: the incident log. Never pruned, for the same reason
+-- failures are not — the record of when something broke is what people come back for.
+--
+-- `target_id` is SET NULL on delete rather than CASCADE, and `subject` carries the
+-- host name as text: removing a host must not rewrite history about it.
+CREATE TABLE IF NOT EXISTS events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    chain       TEXT    NOT NULL,
+    kind        TEXT    NOT NULL,
+    severity    TEXT    NOT NULL,
+    target_id   INTEGER REFERENCES targets(id) ON DELETE SET NULL,
+    subject     TEXT    NOT NULL,
+    detail      TEXT,
+    -- Reorg depth, for counting and ranking without parsing `detail`. NULL otherwise.
+    depth       INTEGER,
+    prober_id   TEXT    NOT NULL,
+    started_at  TEXT    NOT NULL,
+    ended_at    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_chain_time
+    ON events (chain, started_at DESC);
 
 -- Pending public submissions. Separate from `targets` on purpose: nothing here is
 -- ever probed on the main sweep, so a submitted host cannot become a poller
@@ -893,6 +942,144 @@ class Database:
         )
         return cur.rowcount or 0
 
+    # ------------------------------------------------------------------ headers
+
+    def headers_between(self, chain: Chain, low: int, high: int) -> dict[int, BlockHeader]:
+        """Stored headers with `low <= height <= high`, keyed by height."""
+        rows = self.conn.execute(
+            "SELECT * FROM headers WHERE chain = ? AND height BETWEEN ? AND ?",
+            (chain.value, low, high),
+        ).fetchall()
+        return {int(r["height"]): _row_to_header(r) for r in rows}
+
+    def recent_headers(self, chain: Chain, limit: int) -> list[BlockHeader]:
+        """The newest `limit` headers, newest first."""
+        rows = self.conn.execute(
+            "SELECT * FROM headers WHERE chain = ? ORDER BY height DESC LIMIT ?",
+            (chain.value, limit),
+        ).fetchall()
+        return [_row_to_header(r) for r in rows]
+
+    def put_headers(self, chain: Chain, headers: list[BlockHeader], *, keep: int) -> None:
+        """Upsert, then trim everything more than `keep` blocks below the newest.
+
+        An upsert and not an insert: a replaced block is written over the one it
+        replaced, which is what makes the stored row at each height mean "the block
+        the fleet agreed on last time anyone looked".
+        """
+        if not headers:
+            return
+        with self.tx() as conn:
+            conn.executemany(
+                """
+                INSERT INTO headers
+                    (chain, height, hash, previous, mined_at, proof, difficulty_json)
+                VALUES (?,?,?,?,?,?,?)
+                ON CONFLICT (chain, height) DO UPDATE SET
+                    hash = excluded.hash, previous = excluded.previous,
+                    mined_at = excluded.mined_at, proof = excluded.proof,
+                    difficulty_json = excluded.difficulty_json
+                """,
+                [
+                    (
+                        chain.value,
+                        h.height,
+                        h.hash,
+                        h.previous,
+                        _iso(h.mined_at),
+                        h.proof,
+                        json.dumps(h.total_difficulty.model_dump(mode="json")),
+                    )
+                    for h in headers
+                ],
+            )
+            conn.execute(
+                """
+                DELETE FROM headers
+                 WHERE chain = ?
+                   AND height < (SELECT MAX(height) FROM headers WHERE chain = ?) - ?
+                """,
+                (chain.value, chain.value, keep),
+            )
+
+    def delete_headers_above(self, chain: Chain, height: int) -> int:
+        """Forget stored headers above `height`: the branch they were on lost."""
+        cur = self.conn.execute(
+            "DELETE FROM headers WHERE chain = ? AND height > ?", (chain.value, height)
+        )
+        return cur.rowcount or 0
+
+    # ------------------------------------------------------------------- events
+
+    def open_event(self, event: Event, target_id: int | None = None) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO events
+                (chain, kind, severity, target_id, subject, detail, depth, prober_id,
+                 started_at, ended_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                event.chain.value,
+                event.kind.value,
+                event.severity.value,
+                target_id,
+                event.subject,
+                event.detail,
+                event.depth,
+                event.prober_id,
+                _iso(event.started_at),
+                _iso(event.ended_at) if event.ended_at else None,
+            ),
+        )
+        return int(cur.lastrowid or 0)
+
+    def close_event(self, event_id: int, ended_at: datetime | None = None) -> None:
+        self.conn.execute(
+            "UPDATE events SET ended_at = ? WHERE id = ? AND ended_at IS NULL",
+            (_iso(ended_at or _now()), event_id),
+        )
+
+    def update_event_detail(self, event_id: int, detail: str | None) -> None:
+        self.conn.execute(
+            "UPDATE events SET detail = ? WHERE id = ?", (detail, event_id)
+        )
+
+    def ongoing_events(self) -> list[tuple[Event, int | None]]:
+        """Every open event, with its target id, for the tracker to resume after a
+        restart instead of opening a duplicate of each."""
+        rows = self.conn.execute(
+            f"{_EVENT_SELECT} WHERE e.ended_at IS NULL ORDER BY e.started_at"
+        ).fetchall()
+        return [(_row_to_event(r), r["target_id"]) for r in rows]
+
+    def events(
+        self,
+        chain: Chain,
+        *,
+        limit: int = 50,
+        min_severity: Severity = Severity.INFO,
+        since: datetime | None = None,
+    ) -> list[Event]:
+        """Newest first. Ongoing events are included wherever they started."""
+        allowed = [s.value for s in Severity if s.rank >= min_severity.rank]
+        marks = ",".join("?" for _ in allowed)
+        sql = f"{_EVENT_SELECT} WHERE e.chain = ? AND e.severity IN ({marks})"
+        params: list[Any] = [chain.value, *allowed]
+        if since is not None:
+            sql += " AND (e.started_at >= ? OR e.ended_at IS NULL)"
+            params.append(_iso(since))
+        sql += " ORDER BY e.started_at DESC, e.id DESC LIMIT ?"
+        params.append(limit)
+        return [_row_to_event(r) for r in self.conn.execute(sql, params).fetchall()]
+
+    def reorgs_since(self, chain: Chain, since: datetime) -> list[Event]:
+        rows = self.conn.execute(
+            f"{_EVENT_SELECT} WHERE e.chain = ? AND e.kind = ? AND e.started_at >= ?",
+            (chain.value, EventKind.REORG.value, _iso(since)),
+        ).fetchall()
+        return [_row_to_event(r) for r in rows]
+
     # -------------------------------------------------------------- submissions
 
     def pending_submission_count(self) -> int:
@@ -1144,4 +1331,47 @@ def _row_to_target(row: sqlite3.Row) -> Target:
         enabled=bool(row["enabled"]),
         geo=GeoInfo.model_validate(geo_raw),
         created_at=parse_iso(row["created_at"]),
+    )
+
+
+
+def _row_to_header(row: sqlite3.Row) -> BlockHeader:
+    mined = parse_iso(row["mined_at"])
+    assert mined is not None, "headers.mined_at is written by _iso and always parses"
+    difficulty = Difficulty()
+    if row["difficulty_json"]:
+        difficulty = Difficulty.model_validate(json.loads(row["difficulty_json"]))
+    return BlockHeader(
+        height=int(row["height"]),
+        hash=row["hash"],
+        previous=row["previous"],
+        mined_at=mined,
+        proof=row["proof"],
+        total_difficulty=difficulty,
+    )
+
+
+#: Events joined to their target for the slug. A LEFT JOIN, because a removed target's
+#: events outlive it with a NULL `target_id`.
+_EVENT_SELECT = """
+    SELECT e.*, t.slug AS target_slug
+      FROM events e LEFT JOIN targets t ON t.id = e.target_id
+"""
+
+
+def _row_to_event(row: sqlite3.Row) -> Event:
+    started = parse_iso(row["started_at"])
+    assert started is not None, "events.started_at is written by _iso and always parses"
+    return Event(
+        id=int(row["id"]),
+        chain=Chain(row["chain"]),
+        kind=EventKind(row["kind"]),
+        severity=Severity(row["severity"]),
+        subject=row["subject"],
+        target_slug=row["target_slug"],
+        detail=row["detail"],
+        depth=row["depth"],
+        prober_id=row["prober_id"],
+        started_at=started,
+        ended_at=parse_iso(row["ended_at"]),
     )

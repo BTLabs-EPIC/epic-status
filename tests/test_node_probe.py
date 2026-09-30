@@ -20,7 +20,7 @@ import respx
 
 from epic_status.models import Reason
 from epic_status.net import Resolved, build_client
-from epic_status.probes.node import probe_tip, probe_tip_age, probe_version
+from epic_status.probes.node import probe_header, probe_tip, probe_version
 
 RESOLVED = Resolved(
     hostname="node.epiccash.com",
@@ -295,39 +295,68 @@ async def test_probe_version_failure_is_not_fatal(clients: Any) -> None:
 # ---------------------------------------------------------------------- tip age
 
 
+#: Recorded from mainnet, with the proof and the Merkle roots trimmed.
+HEADER_OK = {
+    "height": 3721166,
+    "hash": "9db990acbdaebc0defb42a3aeb0ea62e6ec10cf8937bc9e9baf934586c2d26fd",
+    "previous": "cc2c48191cec1b09f39937d0a3d75ace077765c98d50614997cbfd93d6c0c22c",
+    "proof": "Cuckoo",
+    "timestamp": "2026-09-22T05:41:12+00:00",
+    "total_difficulty": {
+        "cuckaroo": 231941927570,
+        "cuckatoo": 128410260130803,
+        "progpow": 8130861338913581012,
+        "randomx": 4581163557466978,
+    },
+}
+
+
 @respx.mock
-async def test_probe_tip_age_parses_rfc3339(clients: Any) -> None:
+async def test_probe_header_parses_a_mainnet_header(clients: Any) -> None:
     """Height alone cannot distinguish "this node is answering" from "the chain is
-    moving". The header's own timestamp can."""
+    moving". The header's own timestamp can, and its hash and parent are what make a
+    replaced block visible."""
     client, _ = clients
-    body = {
-        "id": 1,
-        "jsonrpc": "2.0",
-        "result": {
-            "Ok": {"height": 3721166, "timestamp": "2026-09-22T05:41:12+00:00"}
-        },
-    }
+    body = {"id": 1, "jsonrpc": "2.0", "result": {"Ok": HEADER_OK}}
     respx.post(RPC_URL).mock(return_value=httpx.Response(200, json=body))
 
-    age = await probe_tip_age(client, RESOLVED, 3721166)
+    probe = await probe_header(client, RESOLVED, 3721166)
 
-    assert age.ok is True
-    assert age.timestamp is not None
-    assert age.timestamp.year == 2026
-    assert age.timestamp.utcoffset() is not None
-    assert age.timestamp.utcoffset().total_seconds() == 0  # type: ignore[union-attr]
+    assert probe.ok is True
+    header = probe.header
+    assert header is not None
+    assert header.mined_at.year == 2026
+    assert header.mined_at.utcoffset() is not None
+    assert header.mined_at.utcoffset().total_seconds() == 0  # type: ignore[union-attr]
+    assert header.hash.startswith("9db990")
+    assert header.previous.startswith("cc2c48")
+    assert header.proof == "Cuckoo"
+    assert header.total_difficulty.randomx == 4581163557466978
 
 
 @respx.mock
-async def test_probe_tip_age_rejects_a_missing_timestamp(clients: Any) -> None:
+async def test_probe_header_rejects_a_missing_timestamp(clients: Any) -> None:
     client, _ = clients
     body = {"id": 1, "jsonrpc": "2.0", "result": {"Ok": {"height": 3721166}}}
     respx.post(RPC_URL).mock(return_value=httpx.Response(200, json=body))
 
-    age = await probe_tip_age(client, RESOLVED, 3721166)
+    probe = await probe_header(client, RESOLVED, 3721166)
 
-    assert age.ok is False
-    assert age.error == "no timestamp in header"
+    assert probe.ok is False
+    assert probe.error == "no timestamp in header"
+
+
+@respx.mock
+async def test_probe_header_rejects_the_wrong_height(clients: Any) -> None:
+    """Filing a header under a height it does not belong to would corrupt the record
+    that reorg detection compares against."""
+    client, _ = clients
+    body = {"id": 1, "jsonrpc": "2.0", "result": {"Ok": {**HEADER_OK, "height": 5}}}
+    respx.post(RPC_URL).mock(return_value=httpx.Response(200, json=body))
+
+    probe = await probe_header(client, RESOLVED, 3721166)
+
+    assert probe.ok is False
 
 
 # ------------------------------------------------------------------ transport
