@@ -366,6 +366,9 @@ class Check(BaseModel):
     ok: bool
     at: datetime
     latency_ms: int | None = None
+    state: State | None = None
+    """The row's verdict when this check was recorded. What separates a failure that
+    was still being confirmed (amber in the strip) from one that meant down (red)."""
 
 
 # --------------------------------------------------------------------------- events

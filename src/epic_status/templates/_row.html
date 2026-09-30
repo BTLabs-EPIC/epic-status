@@ -181,8 +181,13 @@
     #}
     <span class="spark" role="img"
           aria-label="last {{ status.history | length }} checks, {{ status.history | selectattr('ok') | list | length }} successful">
-      {% for c in status.history %}<i class="{{ 'ok' if c.ok else 'bad' }}" tabindex="0"
-        title="{{ c.at | utc }} · {{ 'ok' if c.ok else 'failed' }}{% if c.latency_ms is not none %} · {{ c.latency_ms | ms }}{% endif %}"></i>{% endfor %}
+      {#
+        A failed check is amber while the row was still confirming it and red only once
+        the row was down. One missed answer is not an outage, and painting it the same red
+        as a real one made a slow pool look broken in every other bar.
+      #}
+      {% for c in status.history %}{% set down = not c.ok and (c.state is none or c.state == State.DOWN) %}<i class="{{ 'ok' if c.ok else ('bad' if down else 'warn') }}" tabindex="0"
+        title="{{ c.at | utc }} · {{ 'ok' if c.ok else ('failed' if down else 'failed, confirming') }}{% if c.latency_ms is not none %} · {{ c.latency_ms | ms }}{% endif %}"></i>{% endfor %}
     </span>
     {% else %}
     <span class="spark-empty">none yet</span>

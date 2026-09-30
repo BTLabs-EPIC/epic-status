@@ -110,6 +110,8 @@ class Settings(BaseSettings):
     behind an explicit opt-in."""
 
     http_timeout_s: float = 4.0
+    pool_timeout_s: float = 12.0
+    """Pools only. Their stats APIs are slow by nature; see `probes.pool`."""
     ws_timeout_s: float = 8.0
     max_concurrency: int = 16
     """Bounded because probing N third-party hosts is bursty work sharing a

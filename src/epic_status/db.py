@@ -39,6 +39,7 @@ from .models import (
     Kind,
     Severity,
     Source,
+    State,
     Target,
 )
 
@@ -922,7 +923,7 @@ class Database:
         """
         rows = self.conn.execute(
             """
-            SELECT ok, checked_at, latency_ms FROM checks
+            SELECT ok, checked_at, latency_ms, state FROM checks
              WHERE target_id = ? AND prober_id = ?
              ORDER BY checked_at DESC, id DESC LIMIT ?
             """,
@@ -933,8 +934,12 @@ class Database:
             at = parse_iso(r["checked_at"])
             if at is None:
                 continue
+            try:
+                state: State | None = State(r["state"])
+            except ValueError:
+                state = None
             out.append(
-                Check(ok=bool(r["ok"]), at=at, latency_ms=r["latency_ms"])
+                Check(ok=bool(r["ok"]), at=at, latency_ms=r["latency_ms"], state=state)
             )
         return out
 

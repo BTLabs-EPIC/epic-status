@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from epic_status.chain import Reorg
 from epic_status.db import Database
-from epic_status.events import SETTLE_S, STALL_AFTER_S, EventTracker
+from epic_status.events import DOWN_AFTER_S, SETTLE_S, STALL_AFTER_S, EventTracker
 from epic_status.models import (
     Chain,
     EventKind,
@@ -41,10 +41,18 @@ def _tracker(db: Database) -> EventTracker:
 SUMMARY = NetworkSummary(chain=Chain.MAINNET, tip_height=100, tip_age_s=30)
 
 
+def _down_long_enough(tracker: EventTracker, statuses: list[TargetStatus], start: datetime) -> None:
+    """Observe a sweep at `start` and again once DOWN_AFTER_S has passed."""
+    tracker.observe(Chain.MAINNET, statuses, SUMMARY, now=start)
+    tracker.observe(
+        Chain.MAINNET, statuses, SUMMARY, now=start + timedelta(seconds=DOWN_AFTER_S)
+    )
+
+
 def test_a_down_target_opens_one_event_not_one_per_sweep(db: Database) -> None:
     tracker = _tracker(db)
     down = _status(db, State.DOWN)
-    for i in range(5):
+    for i in range(20):
         tracker.observe(Chain.MAINNET, [down], SUMMARY, now=T0 + timedelta(seconds=5 * i))
 
     events = db.events(Chain.MAINNET)
@@ -60,10 +68,10 @@ def test_recovery_settles_before_closing_and_ends_when_it_first_cleared(
 ) -> None:
     tracker = _tracker(db)
     status = _status(db, State.DOWN)
-    tracker.observe(Chain.MAINNET, [status], SUMMARY, now=T0)
+    _down_long_enough(tracker, [status], T0)
 
     healthy = status.model_copy(update={"state": State.HEALTHY})
-    cleared = T0 + timedelta(seconds=30)
+    cleared = T0 + timedelta(seconds=DOWN_AFTER_S + 30)
     tracker.observe(Chain.MAINNET, [healthy], SUMMARY, now=cleared)
     assert db.events(Chain.MAINNET)[0].ongoing
 
@@ -79,16 +87,17 @@ def test_a_flap_inside_the_settle_window_is_the_same_incident(db: Database) -> N
     tracker = _tracker(db)
     status = _status(db, State.DOWN)
     healthy = status.model_copy(update={"state": State.HEALTHY})
-    tracker.observe(Chain.MAINNET, [status], SUMMARY, now=T0)
-    tracker.observe(Chain.MAINNET, [healthy], SUMMARY, now=T0 + timedelta(seconds=10))
-    tracker.observe(Chain.MAINNET, [status], SUMMARY, now=T0 + timedelta(seconds=20))
+    _down_long_enough(tracker, [status], T0)
+    later = T0 + timedelta(seconds=DOWN_AFTER_S)
+    tracker.observe(Chain.MAINNET, [healthy], SUMMARY, now=later + timedelta(seconds=10))
+    tracker.observe(Chain.MAINNET, [status], SUMMARY, now=later + timedelta(seconds=20))
 
     assert len(db.events(Chain.MAINNET)) == 1
 
 
 def test_a_restart_resumes_the_open_incident(db: Database) -> None:
     status = _status(db, State.DOWN)
-    _tracker(db).observe(Chain.MAINNET, [status], SUMMARY, now=T0)
+    _down_long_enough(_tracker(db), [status], T0)
 
     _tracker(db).observe(Chain.MAINNET, [status], SUMMARY, now=T0 + timedelta(minutes=5))
 
@@ -97,8 +106,8 @@ def test_a_restart_resumes_the_open_incident(db: Database) -> None:
 
 def test_a_target_leaving_the_board_closes_its_incident(db: Database) -> None:
     tracker = _tracker(db)
-    tracker.observe(Chain.MAINNET, [_status(db, State.DOWN)], SUMMARY, now=T0)
-    tracker.observe(Chain.MAINNET, [], SUMMARY, now=T0 + timedelta(seconds=5))
+    _down_long_enough(tracker, [_status(db, State.DOWN)], T0)
+    tracker.observe(Chain.MAINNET, [], SUMMARY, now=T0 + timedelta(seconds=DOWN_AFTER_S + 5))
 
     assert not db.events(Chain.MAINNET)[0].ongoing
 
@@ -152,3 +161,22 @@ def test_a_floonet_stall_is_only_informational(db: Database) -> None:
     )
     _tracker(db).observe(Chain.FLOONET, [], stalled, now=T0)
     assert db.events(Chain.FLOONET)[0].severity is Severity.INFO
+
+
+def test_a_short_outage_never_reaches_the_log(db: Database) -> None:
+    """Red on the board for half a minute, nothing in the feed."""
+    tracker = _tracker(db)
+    status = _status(db, State.DOWN)
+    tracker.observe(Chain.MAINNET, [status], SUMMARY, now=T0)
+    tracker.observe(Chain.MAINNET, [status], SUMMARY, now=T0 + timedelta(seconds=30))
+    healthy = status.model_copy(update={"state": State.HEALTHY})
+    tracker.observe(Chain.MAINNET, [healthy], SUMMARY, now=T0 + timedelta(seconds=35))
+    tracker.observe(Chain.MAINNET, [status], SUMMARY, now=T0 + timedelta(seconds=40))
+
+    assert db.events(Chain.MAINNET) == []
+
+
+def test_a_logged_outage_starts_when_it_began(db: Database) -> None:
+    tracker = _tracker(db)
+    _down_long_enough(tracker, [_status(db, State.DOWN)], T0)
+    assert db.events(Chain.MAINNET)[0].started_at == T0

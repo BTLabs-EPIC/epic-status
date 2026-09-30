@@ -190,6 +190,8 @@ async def probe_pool(
     client: httpx.AsyncClient,
     resolved: Resolved,
     adapter_name: str | None,
+    *,
+    timeout: float | None = None,
 ) -> PoolProbe:
     """One GET against the pool's stats endpoint.
 
@@ -215,6 +217,11 @@ async def probe_pool(
             pinned_url(resolved, adapter.path),
             headers={"host": resolved.hostname, "accept": "application/json"},
             extensions={"sni_hostname": resolved.hostname},
+            # Its own budget, not the node probe's. A pool's stats route is a web app
+            # computing an aggregate, often behind a CDN, and a slow answer is still an
+            # answer: epicmine's successes run 2.5 s on the median and 5.6 s at worst,
+            # so a 4 s limit was recording one check in five as an outage.
+            timeout=httpx.USE_CLIENT_DEFAULT if timeout is None else timeout,
         )
     except Exception as exc:  # noqa: BLE001 - every failure mode becomes a Reason
         reason, message = classify_http_error(exc)

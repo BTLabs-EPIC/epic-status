@@ -49,6 +49,12 @@ STALL_AFTER_S = 900
 #: How long a condition must stay clear before its event closes.
 SETTLE_S = 60.0
 
+#: How long a target must stay down before its outage is logged. The board goes red at
+#: the third failed check; the log waits a minute more, so a host that drops out for one
+#: sweep and comes back is a red bar on the board and not an entry in anyone's feed.
+#: The entry is backdated to when the target first went down, so its duration is honest.
+DOWN_AFTER_S = 60.0
+
 #: Depth at which a reorg stops being routine. One- and two-block reorgs are orphan
 #: races, which every proof-of-work chain has; three or more is worth a second look.
 DEEP_REORG = 3
@@ -69,6 +75,8 @@ class EventTracker:
         self.prober_id = prober_id
         self.cert_warn_days = cert_warn_days
         self._open: dict[_Key, _Open] = {}
+        self._pending: dict[_Key, datetime] = {}
+        """Conditions active but not yet for long enough to be logged, and since when."""
         for event, target_id in db.ongoing_events():
             key = _key(event.chain, event.kind, target_id, "chain")
             self._open[key] = _Open(event.id or 0)
@@ -96,6 +104,7 @@ class EventTracker:
                 active=status.state is State.DOWN,
                 now=now,
                 target_id=target.id,
+                open_after_s=DOWN_AFTER_S,
                 event=Event(
                     chain=chain,
                     kind=EventKind.DOWN,
@@ -213,6 +222,7 @@ class EventTracker:
         event: Event,
         target_id: int | None = None,
         settle_s: float = SETTLE_S,
+        open_after_s: float = 0.0,
     ) -> _Key:
         """Open the event if `active` and none is open; otherwise settle and close.
 
@@ -223,11 +233,18 @@ class EventTracker:
         current = self._open.get(key)
         if active:
             if current is None:
+                since = self._pending.setdefault(key, now)
+                if (now - since).total_seconds() < open_after_s:
+                    return key
+                del self._pending[key]
+                if open_after_s:
+                    event = event.model_copy(update={"started_at": since})
                 self._open[key] = _Open(self.db.open_event(event, target_id))
                 log.info("event opened: %s %s", event.kind.value, event.subject)
             else:
                 current.clear_since = None
             return key
+        self._pending.pop(key, None)
         if current is not None:
             if current.clear_since is None:
                 current.clear_since = now

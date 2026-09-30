@@ -332,6 +332,13 @@ a {
   background: rgba(255, 255, 255, 0.05);
 }
 
+/* The topbar stays charcoal in light mode, so `--ink` — dark on paper — is dark on
+   dark here. Every hover in the bar names the chrome ink explicitly. */
+[data-theme='light'] .topnav a:hover {
+  color: var(--chrome-ink);
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .topnav a[aria-current='page'] {
   color: var(--primary);
 }
@@ -363,6 +370,11 @@ a {
   border-color: var(--line-strong);
 }
 
+[data-theme='light'] .theme-toggle:hover {
+  color: var(--chrome-ink);
+  border-color: var(--chrome-dim);
+}
+
 /* ------------------------------------------------------- network switch */
 
 /* Mainnet / Floonet. A segmented control, because the options are mutually exclusive
@@ -374,9 +386,8 @@ a {
  * scrolling at 390px, and the control that says which network the whole page describes
  * must not be the thing that scrolls out of view.
  *
- * Follows the topbar's explicit light-mode overrides rather than a token-redeclaring island
- * token trick, because the topbar itself does — it is not an island, so the tokens are
- * still the light-page values in here. */
+ * Follows the topbar's explicit light-mode overrides, because the topbar itself does: the
+ * tokens in here are still the light-page values, so each light-mode colour is named. */
 .chainsel {
   display: flex;
   flex: 0 0 auto;
@@ -412,6 +423,11 @@ a {
 
 .chainsel a:hover {
   color: var(--ink);
+}
+
+/* Not on the selected chip, whose dark-on-gold text is fixed in both themes. */
+[data-theme='light'] .chainsel a:not([aria-current='page']):hover {
+  color: var(--chrome-ink);
 }
 
 /* The selected segment is a filled chip, not a recolouring. `.topnav` marks its current
@@ -1119,6 +1135,13 @@ main {
 
 .spark i.bad {
   background: var(--danger-dot);
+  height: 14px;
+}
+
+/* A failure the row had not yet confirmed. Full height like a red bar, because it is a
+   failed check, and amber because it had not yet meant the host was down. */
+.spark i.warn {
+  background: var(--warn-dot);
   height: 14px;
 }
 

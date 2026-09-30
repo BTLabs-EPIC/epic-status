@@ -432,7 +432,12 @@ class Poller:
                     ok=False, reason=resolved.reason, error=resolved.message
                 )
             else:
-                probe = await probe_pool(self._client, resolved, target.adapter)
+                probe = await probe_pool(
+                    self._client,
+                    resolved,
+                    target.adapter,
+                    timeout=self.settings.pool_timeout_s,
+                )
         self._last_pool[target.id] = (asyncio.get_running_loop().time(), probe)
         return probe
 

@@ -291,3 +291,15 @@ def test_capabilities_render_as_words(snapshot: Snapshot) -> None:
     html = render_board(snapshot=snapshot, settings=SETTINGS)
     assert "AAAA record, not answering" in html
     assert "blocked (CORS)" in html
+
+
+def test_an_unconfirmed_failure_is_amber_and_a_confirmed_one_red(snapshot: Snapshot) -> None:
+    """One missed answer is not an outage and must not look like one."""
+    base = datetime.now(UTC)
+    snapshot.nodes[0].history = [
+        Check(ok=False, at=base, state=State.DEGRADED),
+        Check(ok=False, at=base, state=State.DOWN),
+    ]
+    html = render_board(snapshot=snapshot, settings=SETTINGS)
+    assert 'class="warn"' in html and "failed, confirming" in html
+    assert 'class="bad"' in html
