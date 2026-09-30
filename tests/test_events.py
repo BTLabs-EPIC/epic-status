@@ -144,3 +144,11 @@ def test_a_reorg_is_written_closed_with_its_depth(db: Database) -> None:
     assert event.severity is Severity.WARN
     assert not event.ongoing
     assert "3 blocks replaced from height 98" in (event.detail or "")
+
+
+def test_a_floonet_stall_is_only_informational(db: Database) -> None:
+    stalled = NetworkSummary(
+        chain=Chain.FLOONET, tip_height=10, tip_age_s=STALL_AFTER_S * 10, tip_mined_at=T0
+    )
+    _tracker(db).observe(Chain.FLOONET, [], stalled, now=T0)
+    assert db.events(Chain.FLOONET)[0].severity is Severity.INFO

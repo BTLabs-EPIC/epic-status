@@ -185,22 +185,6 @@
   --info-dot: #1b7fd4;
 }
 
-/* Chrome islands. Rather than restyling each component for light mode, the island
-   root redeclares the token NAMES with dark values, so every child is correct
-   without being enumerated. This is the single trick that makes light mode
-   maintainable. */
-[data-theme='light'] .chrome-island {
-  --bg: var(--chrome);
-  --s1: #221f1c;
-  --s2: #2a2622;
-  --ink: var(--chrome-ink);
-  --ink-dim: var(--chrome-dim);
-  --line: var(--chrome-line);
-  --line-strong: #453f38;
-  --primary: var(--gold-light);
-  --mark: var(--gold-light);
-}
-
 /* ----------------------------------------------------------------- reset */
 
 *,
@@ -332,9 +316,6 @@ a {
 
 .topnav a {
   white-space: nowrap;
-}
-
-.topnav a {
   padding: var(--sp-6) var(--sp-8);
   border-radius: 5px;
   font-size: var(--t-small);
@@ -393,7 +374,7 @@ a {
  * scrolling at 390px, and the control that says which network the whole page describes
  * must not be the thing that scrolls out of view.
  *
- * Follows the topbar's explicit light-mode overrides rather than the `.chrome-island`
+ * Follows the topbar's explicit light-mode overrides rather than a token-redeclaring island
  * token trick, because the topbar itself does — it is not an island, so the tokens are
  * still the light-page values in here. */
 .chainsel {
@@ -583,6 +564,11 @@ main {
   text-transform: uppercase;
   color: var(--ink-dim);
   margin: 0 0 var(--sp-4);
+  /* Flex so the chain mark beside CHAIN TIP sits on the label's cap height and reads as
+     part of the word rather than as an icon parked next to it. */
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
 }
 
 .fact dd {
@@ -1316,30 +1302,6 @@ pre {
   color: var(--code-ink);
 }
 
-.checklist {
-  list-style: none;
-  margin: var(--sp-12) 0 0;
-  padding: 0;
-  font-size: var(--t-small);
-}
-
-.checklist li {
-  display: flex;
-  gap: var(--sp-8);
-  padding: var(--sp-6) 0;
-  border-top: 1px solid var(--line);
-}
-
-.checklist li:first-child {
-  border-top: 0;
-}
-
-.checklist .mark {
-  font-family: var(--font-mono);
-  flex: 0 0 1rem;
-  color: var(--ok-ink);
-}
-
 /* ---------------------------------------------------------------- footer */
 
 .foot {
@@ -1987,21 +1949,6 @@ pre {
   cursor: help;
 }
 
-/* The one outbound link in the summary strip: the released version points at its own
-   release tag, so the number and the link can never disagree. Inherits the strip's
-   numerals rather than the body link colour, because it is a value first. */
-.dd-link {
-  color: inherit;
-  text-decoration: underline;
-  text-decoration-color: var(--line-strong);
-  text-underline-offset: 4px;
-}
-
-.dd-link:hover,
-.dd-link:focus-visible {
-  text-decoration-color: currentColor;
-}
-
 
 
 .group-head-bare {
@@ -2019,10 +1966,6 @@ pre {
    varying height would imply a magnitude that does not exist. */
 .spark i.ok {
   height: 9px;
-}
-
-.spark i.bad {
-  height: 14px;
 }
 
 
@@ -2086,24 +2029,6 @@ pre {
  * styles into shadow roots, which needed `style-src 'unsafe-inline'` on that route. Every
  * route now ships the same strict policy.
  * ======================================================================== */
-
-/* A fact that changes how the reader uses the thing, not a decorative aside. Its own
-   treatment because burying "calling this probes nothing" in a paragraph is how it gets
-   missed, and it is the reason the API needs no key. */
-.callout-key {
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  padding: var(--sp-16);
-  margin: 0 0 var(--sp-32);
-  background: var(--s1);
-  font-size: var(--t-body);
-  color: var(--ink-dim);
-  max-width: 72ch;
-}
-
-.callout-key b {
-  color: var(--ink);
-}
 
 .routes {
   display: grid;
@@ -2283,14 +2208,6 @@ pre {
   background: none;
   padding: 0;
   color: inherit;
-}
-
-.fields-kind {
-  display: inline-block;
-  margin-left: var(--sp-6);
-  font-family: var(--font-ui);
-  font-size: var(--t-micro);
-  color: var(--ink-dim);
 }
 
 .fields dd {
@@ -2608,13 +2525,9 @@ pre {
    Epicbox protocol has no release page of its own, so it renders as plain text rather than
    borrowing a link to the wrong artifact. Same weight either way, so the two headers read
    as the same statement. */
-.rel,
-.rel-plain {
+.rel {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
-}
-
-.rel {
   text-decoration: underline;
   text-decoration-color: var(--line-strong);
   text-underline-offset: 3px;
@@ -2846,21 +2759,6 @@ pre {
 }
 
 
-/* The chain mark beside the CHAIN TIP label. Sized to the label's cap height and dimmed to
-   the label's colour, so it reads as part of the word rather than as an icon parked next to
-   it. */
-.fact dt {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-6);
-}
-
-.dt-mark {
-  flex: none;
-  opacity: 0.75;
-}
-
-
 
 /* ===========================================================================
  * Admin: live saving
@@ -2953,6 +2851,9 @@ input[data-state='failed'] {
  * them, with the affordances a control owes — hover, focus ring, pressed state.
  */
 .badge-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
   font: inherit;
   font-size: var(--t-micro);
   font-family: var(--font-ui);
@@ -3032,12 +2933,6 @@ input[data-state='failed'] {
  * text stays neutral, so the tick is the thing the eye catches rather than a second coloured
  * word competing with the fault colours in the table.
  */
-.badge-verified-host {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-4);
-}
-
 .tick {
   flex: none;
   color: var(--ok-ink);
@@ -3045,12 +2940,6 @@ input[data-state='failed'] {
 
 /* In the dashboard the tag is a control, so the tick inherits the button's colour on hover
    rather than staying green against a changed border. */
-.badge-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-4);
-}
-
 .badge-tag .tick {
   color: var(--ok-ink);
 }
@@ -3484,7 +3373,6 @@ input[data-state='failed'] {
 
 /* The chain-tip mark sits beside an 11px uppercase label, so it is dimmed to the label's weight
    rather than competing with the number underneath. */
-.dt-mark,
 .icon-boxes {
   flex: none;
   opacity: 0.8;

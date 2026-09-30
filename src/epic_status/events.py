@@ -156,7 +156,10 @@ class EventTracker:
                 event=Event(
                     chain=chain,
                     kind=EventKind.STALL,
-                    severity=Severity.BAD,
+                    # A test network is mined when someone is testing. A long gap on
+                    # floonet is the normal state of affairs, worth recording and not
+                    # worth a red line in anybody's feed.
+                    severity=Severity.BAD if chain is Chain.MAINNET else Severity.INFO,
                     subject=f"{chain.label} chain",
                     detail=(
                         f"no new block since height {summary.tip_height:,}"
