@@ -3574,21 +3574,3 @@ input[data-state='failed'] {
 .algos tr > :last-child {
   padding-right: 0;
 }
-
-/* --------------------------------------------------------------- providers */
-
-.providers {
-  list-style: none;
-  margin: 0 0 var(--sp-8);
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-8) var(--sp-24);
-  font-size: var(--t-small);
-}
-
-.provider-count {
-  font-family: var(--font-mono);
-  font-size: var(--t-micro);
-  color: var(--ink-dim);
-}

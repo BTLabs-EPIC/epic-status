@@ -5,7 +5,6 @@
 {% block content %}
 <div class="page-head">
   <h1>History</h1>
-  <p>What happened, how the chain is moving, and ninety days of uptime per host.</p>
 </div>
 
 {#
@@ -114,25 +113,6 @@
   <p class="prose prose-tight">Collecting block headers. This fills in over the first few minutes.</p>
   {% endif %}
 </section>
-
-{% if network and network.providers %}
-{#
-  Provider concentration. A property of the fleet, not an answer to "can I transact",
-  which is why it lives here and not on the board.
-#}
-<section class="group" aria-labelledby="hosting">
-  <div class="group-head">
-    <h2 id="hosting">Where it runs</h2>
-  </div>
-  {% set total = network.providers.values() | sum %}
-  <ul class="providers">
-    {% for name, count in network.providers.items() %}
-    <li><span class="provider-name">{{ name }}</span> <span class="provider-count">{{ count }} of {{ total }}</span></li>
-    {% endfor %}
-  </ul>
-  <p class="prose prose-tight">By hosting provider, from registry data. One provider's outage takes every host it runs with it.</p>
-</section>
-{% endif %}
 
 <section class="group" aria-labelledby="uptime">
   <div class="group-head">
