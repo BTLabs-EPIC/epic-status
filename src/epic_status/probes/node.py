@@ -205,6 +205,41 @@ async def probe_tip(
     )
 
 
+async def probe_cors(
+    client: httpx.AsyncClient, resolved: Resolved, origin: str
+) -> bool | None:
+    """Would a browser on another site be allowed to call this node?
+
+    The CORS preflight a wallet running in a web page sends before its first
+    `get_tip`: an OPTIONS naming POST and a JSON content type. A node that returns
+    `access-control-allow-origin` on the POST but fails the preflight is unusable from
+    a browser, so the POST's own headers are not the test — this is.
+
+    None when the request itself failed: that is "unknown", not "no".
+    """
+    try:
+        response = await client.request(
+            "OPTIONS",
+            pinned_url(resolved, _RPC_PATH),
+            headers={
+                "host": resolved.hostname,
+                "origin": origin,
+                "access-control-request-method": "POST",
+                "access-control-request-headers": "content-type",
+            },
+            extensions={"sni_hostname": resolved.hostname},
+        )
+    except Exception:  # noqa: BLE001 - unknown, not a verdict
+        return None
+    if response.status_code >= 400:
+        return False
+    allowed_origin = response.headers.get("access-control-allow-origin", "")
+    allowed_headers = response.headers.get("access-control-allow-headers", "").lower()
+    origin_ok = allowed_origin in ("*", origin)
+    headers_ok = "*" in allowed_headers or "content-type" in allowed_headers
+    return origin_ok and headers_ok
+
+
 async def probe_version(
     client: httpx.AsyncClient, resolved: Resolved
 ) -> VersionProbe:

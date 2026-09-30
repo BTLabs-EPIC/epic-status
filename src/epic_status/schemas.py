@@ -143,11 +143,26 @@ class NodeStatus(TargetBase):
         "how a fork becomes visible.",
     )
     node_version: str | None = Field(None, examples=["4.0.4"])
+    ipv6: str | None = Field(
+        None,
+        description="`yes` answered over IPv6; `unreachable` publishes an AAAA record "
+        "that does not answer; `absent` has none. Null until first checked.",
+        examples=["absent"],
+    )
+    browser_access: bool | None = Field(
+        None,
+        description="Whether the CORS preflight a browser wallet sends is accepted. "
+        "Null until checked, or when the preflight could not be completed.",
+        examples=[True],
+    )
 
 
 class EpicboxStatus(TargetBase):
     protocol_version: str | None = Field(None, examples=["3.0.1"])
     cert_expires_in_days: int | None = Field(None, examples=[61])
+    ipv6: str | None = Field(
+        None, description="As for nodes: `yes`, `unreachable` or `absent`."
+    )
 
 
 class PoolStatus(TargetBase):

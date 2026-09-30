@@ -1017,9 +1017,12 @@ def _serialise_target(status: TargetStatus) -> dict[str, Any]:
         row["tip_lag"] = status.tip_lag
         row["tip_hash"] = status.tip_hash
         row["node_version"] = status.node_version
+        row["ipv6"] = status.ipv6.value if status.ipv6 is not None else None
+        row["browser_access"] = status.browser_access
     elif target.kind is Kind.EPICBOX:
         row["protocol_version"] = status.protocol_version
         row["cert_expires_in_days"] = status.cert_expires_in_days
+        row["ipv6"] = status.ipv6.value if status.ipv6 is not None else None
     elif target.kind is Kind.POOL:
         row["miners"] = status.miners
         row["workers"] = status.workers

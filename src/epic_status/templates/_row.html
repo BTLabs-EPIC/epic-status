@@ -310,6 +310,26 @@
       </div>
       {% endif %}
 
+      {#
+        Measured, not read from DNS: IPv6 is the same probe repeated against the AAAA
+        address alone, and browser access is the CORS preflight a web wallet sends.
+        "unreachable" is worded as a fault because it is one — a client that prefers
+        IPv6 tries that address first and waits for it to time out.
+      #}
+      {% if status.ipv6 is not none %}
+      <div>
+        <dt>IPv6</dt>
+        <dd>{{ {'yes': 'yes', 'unreachable': 'AAAA record, not answering', 'absent': 'no'}[status.ipv6.value] }}</dd>
+      </div>
+      {% endif %}
+
+      {% if kind == Kind.NODE and status.browser_access is not none %}
+      <div>
+        <dt>browser access</dt>
+        <dd>{{ 'allowed (CORS)' if status.browser_access else 'blocked (CORS)' }}</dd>
+      </div>
+      {% endif %}
+
       {% if status.workers is not none %}
       <div>
         <dt>workers</dt>

@@ -63,6 +63,18 @@ class Chain(str, enum.Enum):
         return "Mainnet" if self is Chain.MAINNET else "Floonet"
 
 
+class IPv6(str, enum.Enum):
+    """Whether a host can be used over IPv6, as measured rather than as advertised."""
+
+    YES = "yes"
+    """Has an AAAA record and answered the same probe over it."""
+    UNREACHABLE = "unreachable"
+    """Publishes an AAAA record that does not answer — worse than none, because a
+    client that prefers IPv6 tries it first and waits for the timeout."""
+    ABSENT = "absent"
+    """No AAAA record."""
+
+
 class Source(str, enum.Enum):
     """Where a target came from, which decides whether it may be auto-removed."""
 
@@ -470,6 +482,12 @@ class TargetStatus(BaseModel):
     node_version: str | None = None
     protocol_version: str | None = None
     cert_expires_in_days: int | None = None
+
+    ipv6: IPv6 | None = None
+    """Nodes and relays. None until the first capability check."""
+    browser_access: bool | None = None
+    """Nodes only: whether the CORS preflight a web wallet sends is accepted. None
+    until measured, or when the preflight itself could not be completed."""
 
     # Pool-only. On one flat model with the other kinds' fields for the same reason
     # they are: the board renders one row shape and the alternative is a union type

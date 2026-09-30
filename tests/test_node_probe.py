@@ -20,7 +20,7 @@ import respx
 
 from epic_status.models import Reason
 from epic_status.net import Resolved, build_client
-from epic_status.probes.node import probe_header, probe_tip, probe_version
+from epic_status.probes.node import probe_cors, probe_header, probe_tip, probe_version
 
 RESOLVED = Resolved(
     hostname="node.epiccash.com",
@@ -401,3 +401,45 @@ async def test_probe_posts_to_the_pinned_address_with_the_host_header(
     assert request.url.host == "144.202.75.237"
     assert request.headers["host"] == "node.epiccash.com"
     assert request.extensions["sni_hostname"] == "node.epiccash.com"
+
+
+# ----------------------------------------------------------------- browser access
+
+ORIGIN = "https://status.example.org"
+
+
+@respx.mock
+async def test_probe_cors_accepts_the_mainnet_preflight_answer(clients: Any) -> None:
+    """Recorded from node.epiccash.com: the node's own listener answers the preflight."""
+    client, _ = clients
+    route = respx.options(RPC_URL).mock(
+        return_value=httpx.Response(
+            200,
+            headers={
+                "access-control-allow-origin": "*",
+                "access-control-allow-headers": "Content-Type, Authorization",
+            },
+        )
+    )
+
+    assert await probe_cors(client, RESOLVED, ORIGIN) is True
+    sent = route.calls.last.request.headers
+    assert sent["access-control-request-method"] == "POST"
+    assert sent["origin"] == ORIGIN
+
+
+@respx.mock
+async def test_probe_cors_needs_the_content_type_header_allowed(clients: Any) -> None:
+    """An allowed origin is not enough: a JSON POST also needs `content-type`."""
+    client, _ = clients
+    respx.options(RPC_URL).mock(
+        return_value=httpx.Response(200, headers={"access-control-allow-origin": "*"})
+    )
+    assert await probe_cors(client, RESOLVED, ORIGIN) is False
+
+
+@respx.mock
+async def test_probe_cors_is_unknown_when_the_request_fails(clients: Any) -> None:
+    client, _ = clients
+    respx.options(RPC_URL).mock(side_effect=httpx.ConnectTimeout("slow"))
+    assert await probe_cors(client, RESOLVED, ORIGIN) is None

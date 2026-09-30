@@ -47,6 +47,9 @@ class Cadence(BaseModel):
     here takes over two seconds to answer. Five-second polling of that is rude and
     buys nothing, since miner counts and fees do not move on that timescale."""
     geo_refresh_s: float = 604800.0
+    capabilities_s: float = 1800.0
+    """IPv6 reachability and browser (CORS) access. Properties of a deployment that
+    change when an operator edits a config file, not from minute to minute."""
 
 
 class Thresholds(BaseModel):

@@ -280,3 +280,14 @@ def test_pools_have_no_version_header(snapshot: Snapshot) -> None:
 def test_nodes_and_relays_do_have_a_version_header(snapshot: Snapshot, group: str) -> None:
     html = render_board(snapshot=snapshot, settings=SETTINGS)
     assert "Version" in "".join(_header_cells(html, group))
+
+
+def test_capabilities_render_as_words(snapshot: Snapshot) -> None:
+    """A published AAAA record that does not answer is a fault, and says so."""
+    from epic_status.models import IPv6
+
+    snapshot.nodes[0].ipv6 = IPv6.UNREACHABLE
+    snapshot.nodes[0].browser_access = False
+    html = render_board(snapshot=snapshot, settings=SETTINGS)
+    assert "AAAA record, not answering" in html
+    assert "blocked (CORS)" in html

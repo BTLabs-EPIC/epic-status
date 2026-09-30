@@ -37,6 +37,7 @@ from .models import (
     ChainActivity,
     EpicboxProbe,
     GeoInfo,
+    IPv6,
     Kind,
     NetworkSummary,
     NodeProbe,
@@ -56,7 +57,7 @@ from .net import (
     tcp_probe,
 )
 from .probes.epicbox import probe_relay
-from .probes.node import probe_header, probe_tip, probe_version
+from .probes.node import probe_cors, probe_header, probe_tip, probe_version
 from .probes.pool import probe_pool
 from .chain import ChainTracker, HeaderFetch, canonical_tip
 from .events import EventTracker
@@ -113,6 +114,9 @@ class Poller:
         self._next_cert: dict[int, float] = {}
         self._next_epicbox: dict[int, float] = {}
         self._next_geo: dict[int, float] = {}
+        self._next_caps: dict[int, float] = {}
+        self._ipv6: dict[int, IPv6] = {}
+        self._cors: dict[int, bool | None] = {}
         self._p2p_alive: dict[int, bool] = {}
         self._cert_days: dict[int, int | None] = {}
         self._last_epicbox: dict[int, tuple[float, EpicboxProbe]] = {}
@@ -216,6 +220,7 @@ class Poller:
         self._spawn(self._refresh_p2p(nodes, node_probes, now))
         self._spawn(self._refresh_certs(relays, now))
         self._spawn(self._refresh_geo(targets, now))
+        self._spawn(self._refresh_capabilities(nodes + relays, now))
 
         all_statuses: list[TargetStatus] = []
         snapshots: dict[Chain, Snapshot] = {}
@@ -595,6 +600,50 @@ class Poller:
         if days is not None:
             self.db.set_cert_expiry(target.id, datetime.now(UTC) + timedelta(days=days))
 
+    async def _refresh_capabilities(self, targets: list[Target], now: float) -> None:
+        """IPv6 reachability for nodes and relays, and browser access for nodes.
+
+        IPv6 is measured, not read off DNS: the probe the board already trusts is
+        repeated against the AAAA address alone. A published AAAA record that does not
+        answer is a real fault — a client that prefers IPv6 tries it first — and only
+        a connection distinguishes it from a working one. The address was validated
+        with the rest by `resolve_endpoint`, so this adds no new SSRF surface.
+        """
+        due = [
+            t for t in targets if t.id is not None and now >= self._next_caps.get(t.id, 0.0)
+        ]
+        for target in due:
+            assert target.id is not None
+            self._next_caps[target.id] = now + self.settings.cadence.capabilities_s
+        await asyncio.gather(*(self._one_capability(t) for t in due))
+
+    async def _one_capability(self, target: Target) -> None:
+        assert target.id is not None
+        assert self._client is not None and self._insecure is not None
+        resolved = await self._resolve(target.endpoint)
+        if isinstance(resolved, TargetRejected):
+            return
+        v6 = [a for a in resolved.addresses if ":" in a]
+        if not v6:
+            self._ipv6[target.id] = IPv6.ABSENT
+        else:
+            only_v6 = Resolved(
+                hostname=resolved.hostname,
+                port=resolved.port,
+                addresses=(v6[0],),
+                scheme=resolved.scheme,
+            )
+            async with self._sem:
+                if target.kind is Kind.NODE:
+                    ok = (await probe_tip(self._client, self._insecure, only_v6)).ok
+                else:
+                    ok = (await probe_relay(only_v6, timeout=self.settings.ws_timeout_s)).ok
+            self._ipv6[target.id] = IPv6.YES if ok else IPv6.UNREACHABLE
+        if target.kind is Kind.NODE:
+            origin = self.settings.site_url.rstrip("/")
+            async with self._sem:
+                self._cors[target.id] = await probe_cors(self._client, resolved, origin)
+
     async def _refresh_geo(self, targets: list[Target], now: float) -> None:
         """Enrich a couple of targets per sweep, never the whole fleet at once.
 
@@ -665,6 +714,8 @@ class Poller:
             tip_lag=(tip - probe.height) if tip is not None and probe.height else None,
             tip_hash=probe.tip_hash,
             node_version=row["node_version"],
+            ipv6=self._ipv6.get(target.id),
+            browser_access=self._cors.get(target.id),
             last_checked_at=datetime.now(UTC),
             last_ok_at=datetime.now(UTC) if probe.ok else parse_iso(row["last_ok_at"]),
             last_error=None if probe.ok else (probe.error or row["last_error"]),
@@ -699,6 +750,7 @@ class Poller:
             latency_ms=probe.latency_ms,
             protocol_version=probe.protocol_version or row["protocol_version"],
             cert_expires_in_days=cert_days,
+            ipv6=self._ipv6.get(target.id),
             last_checked_at=datetime.now(UTC),
             last_ok_at=datetime.now(UTC) if probe.ok else parse_iso(row["last_ok_at"]),
             last_error=None if probe.ok else (probe.error or row["last_error"]),
