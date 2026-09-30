@@ -27,8 +27,8 @@ is the chain, one host, or their own setup.
 
 ## Product Purpose
 
-Health and uptime monitoring for Epic Cash mainnet public nodes, Epicbox relays and
-mining pools. One process — asyncio poller, SQLite, server-rendered board — reporting
+Health and uptime monitoring for Epic Cash public nodes, Epicbox relays and mining
+pools, on mainnet and floonet. One process — asyncio poller, SQLite, server-rendered board — reporting
 reachability, latency, tip height and hash, tip lag against the highest tip seen,
 fork detection, version spread, certificate expiry and hosting location, plus a
 read-only JSON API over the same data.
@@ -57,7 +57,8 @@ What a neighboring status page could not truthfully copy is the honesty model:
   blast radii produces a number that means nothing in any of them.
 - **It publishes what it cannot measure.** Peer counts and sync status need an
   `api_secret` and are absent rather than faked. Country is labelled low-confidence
-  because RDAP is inconsistent. Latency is stated as one vantage point.
+  because RDAP is inconsistent. Latency is stated per vantage point, and a remote
+  prober's view is shown beside the verdict rather than averaged into it.
 - **It refuses to become a weapon.** No HTTP GET against a relay, no `Subscribe` or
   `PostSlate`, no probing from the reader's browser, and a submit path built as three
   independent SSRF guards.
@@ -79,18 +80,21 @@ independent probe passes 60 seconds apart.
 Confirmed and load-bearing. Future work preserves all of these:
 
 - **No build step, no client framework, no external services.** Server-rendered
-  Jinja, hand-written CSS and ~250 lines of vanilla JS.
+  Jinja, hand-written CSS and vanilla JS (about 1,100 lines in `app.js`, 330 in the
+  admin-only `admin.js`).
 - **No CDNs of any kind.** Montserrat is bundled and served from this host so no
   reader's address is disclosed to a third party for a typeface. The application sets
   its own CSP, `referrer-policy: no-referrer` and `x-content-type-options`, so a
   self-hoster behind any proxy gets them. Any new asset must be local.
 - **The board must be correct at serve time with JavaScript blocked or broken.** JS
-  does exactly three things: restore the theme choice, tick relative timestamps every
-  second, and patch numbers from the API every 5s. Every value has a correct initial
+  restores the theme choice, ticks timestamps, patches numbers from the API every 5s,
+  sorts columns, and runs the opt-in "Check connection" probe. None of it is required. Every value has a correct initial
   state in the HTML. The day the page matters most is the worst day to discover a
   client-side render is broken.
-- **Nothing in the client contacts a node or a relay.** Reader-side probing would put
-  their address in every operator's logs because they opened a status page.
+- **Nothing in the client contacts a node or a relay on its own.** Reader-side probing
+  on page load would put their address in every operator's logs because they opened a
+  status page. The one exception is the "Check connection" button: opt-in, per host,
+  per press.
 - **Light and dark are both first-class**, persisted to `localStorage`, applied via
   `data-theme` on the root element.
 - **Inline SVG for iconography and flags.** Regional-indicator flag emoji do not
@@ -99,8 +103,9 @@ Confirmed and load-bearing. Future work preserves all of these:
   `unknown` in the same slot, so the column never looks broken.
 - **~70 MB resident under `MemoryHigh=192M` / `MemoryMax=256M`**, `OOMScoreAdjust=600`.
   This process loses to anything that matters more on the box.
-- **One vantage point**, mainnet only, no alerting. All three are deliberate
-  non-goals, not gaps.
+- **No push alerting.** The incident log is published as Atom; nothing is sent. Floonet
+  is a separate board, never mixed into mainnet's numbers. Remote probers push signed
+  evidence and never change a verdict.
 - Templates are autoescaped: hostnames and operator names come from a public form.
 
 ## Brand Commitments

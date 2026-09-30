@@ -1,7 +1,7 @@
 [project]
 name = "epic-status"
 version = "0.1.0"
-description = "Health and uptime monitoring for Epic Cash mainnet public nodes and Epicbox relays"
+description = "Health and uptime monitoring for Epic Cash public nodes, Epicbox relays and mining pools"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }

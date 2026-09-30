@@ -102,11 +102,11 @@ transition at `--dur`. `prefers-reduced-motion` removes all of it.
 
 ## Constraints that shape all of the above
 
-- **No build step, no client framework, no CDN.** Hand-written CSS, ~350 lines of vanilla
-  JS, every asset local.
+- **No build step, no client framework, no CDN.** Hand-written CSS, vanilla JS, every
+  asset local.
 - **The page must be correct at serve time with JavaScript blocked.** JS ticks timestamps,
-  patches numbers from the API, restores the theme, and sorts columns. All four are
-  enhancements; none is required for the board to be right.
+  patches numbers from the API, restores the theme, sorts columns and runs the opt-in
+  connection check. All are enhancements; none is required for the board to be right.
 - **No inline styles.** The CSP has `style-src 'self'` with no `unsafe-inline`, so a
   `style=` attribute is silently dropped. Anything dynamic ships as a class — which is why
   latency bar widths are quantised to twenty 5% steps.

@@ -1,7 +1,7 @@
 # epic-status
 
-Health and uptime monitoring for Epic Cash mainnet public nodes, Epicbox relays and
-mining pools.
+Health and uptime monitoring for Epic Cash public nodes, Epicbox relays and mining
+pools, on mainnet and floonet.
 One process: an asyncio poller, SQLite, and a server-rendered board. No build step,
 no framework on the client, no external services.
 
@@ -21,8 +21,29 @@ POST {endpoint}/v2/foreign
 468 bytes of response. From it: reachability, latency, tip height, tip hash, total
 difficulty. Derived across the fleet: **tip lag against the highest tip seen**, and
 **fork detection** — two nodes reporting the same height with different tip hashes.
-`get_version` runs every 5 minutes; the tip block's timestamp every 60 seconds, from
-one node only, because "is the chain moving" is a property of the chain.
+`get_version` runs every 5 minutes.
+
+Per chain, one `get_header` per new block, from one node that agrees on the tip,
+because "is the chain moving" is a property of the chain rather than of a node. The
+last day of canonical headers is kept, and that record is what three things come from:
+
+- **Tip age** — when the newest block was mined, from its own timestamp.
+- **Reorgs.** A reorg is invisible in any single snapshot; afterwards every node agrees
+  again. It is only visible as a difference from what was seen before. When the tip
+  changes, the new chain is walked back until it rejoins a stored block, and every
+  stored block passed on the way was replaced. The count is the depth. All of this
+  is the public foreign API: `get_tip` names the tip hash, `get_header` returns each
+  block's hash and parent. No owner API and no node of our own are needed.
+  Two limits, stated: a block replaced and replaced back between two sweeps was never
+  seen, and anything deeper than the 30-block walk is reported as "at least 30".
+- **The chain panel** on `/history`: median and longest block interval, the
+  algorithm mix, and each algorithm's current difficulty — the step in its cumulative
+  `total_difficulty` counter between consecutive headers.
+
+Every 30 minutes, per node and relay: **IPv6** — the same probe repeated against the
+AAAA address alone, because an AAAA record that does not answer is a fault a client
+preferring IPv6 hits first — and, for nodes, **browser access**: the CORS preflight a
+web wallet sends before its first call.
 
 Per relay, every 30 seconds: a WebSocket connection, one frame read, close. The relay
 pushes `{"type":"Challenge","str":...}` unprompted before the client writes anything,
@@ -41,10 +62,11 @@ Three things it deliberately does not do:
   aimed at the hosts it exists to help.
 - **No `Subscribe` or `PostSlate`.** Subscribing registers a throwaway key in a
   stranger's datastore; posting writes a row in their database.
-- **No probing from the reader's browser.** Timing requests from a visitor to every
-  listed server would put their address in every operator's logs because they opened
-  a status page. Latency shown is measured server-side, from one vantage point, and
-  the page says which.
+- **No automatic probing from the reader's browser.** Timing requests from a visitor to
+  every listed server would put their address in every operator's logs because they
+  opened a status page. Latency shown is measured server-side, and the page says from
+  where. The "Check connection" button in an expanded row is the one exception: opt-in,
+  per host, per press — see [Security](#security).
 
 ## Quick start
 
@@ -93,6 +115,11 @@ present.
 | `MAX_CONCURRENCY` | `16` | Concurrent in-flight probes. |
 | `HTTP_TIMEOUT_S` | `4.0` | Also the floor on sweep duration when a node is dead. |
 | `WS_TIMEOUT_S` | `8.0` | |
+| `ADMIN_USER` | `admin` | |
+| `ADMIN_PASSWORD_HASH` | empty | From `epic-status admin-password`. Empty means `/admin` does not exist. |
+| `ADMIN_COOKIE_SECURE` | `true` | `false` only for plain-HTTP development. |
+| `OWN_NODE_URL` | unset | A node you run, which the board may time from the reader's browser. |
+| `PROBER_KEYS` | empty | `id:secret,…` for remote probers. Empty means no push endpoint. See [Second vantage point](#second-vantage-point). |
 
 Nothing hardcodes a hostname. Moving an instance to a different domain is a DNS
 record and `SITE_URL`.
@@ -202,6 +229,22 @@ older* than the release is marked — a relay answering a protocol newer than th
 published number is ahead of it, not behind, and a marker that fires on a healthy
 state teaches readers to ignore it.
 
+## Incident log
+
+A snapshot says what is true now; a reader arriving after an outage wants to know when
+it started and whether it is over. Each condition — a target down, a confirmed fork, a
+mainnet stall of 15 minutes without a block, a relay certificate inside 14 days — opens
+**one** row when it starts and closes the same row when it ends, so every incident has a
+duration and a feed reader shows it once. A condition must stay clear for a minute before
+it closes, so a flapping host is one incident rather than a dozen. Open incidents are
+reloaded at boot, so a restart during an outage does not duplicate it. Reorgs are
+instants, logged with their depth: one and two blocks are `info` (orphan races every PoW
+chain has), three or more are `warn`. A floonet stall is `info`; a test network is mined
+when someone is testing.
+
+Shown on `/history`, published at `/api/v1/events.json` and `/feed.atom`. Never pruned,
+for the same reason failures are not.
+
 ## Locations
 
 Two sources, both free, both offline after the lookup.
@@ -245,7 +288,10 @@ open to cross-origin POSTs.
 | `GET /api/v1/pools.json?healthy=true` | Same, for mining pools. |
 | `GET /api/v1/health` | Liveness of **this service**, not of the network. 503 when the snapshot is stale. |
 | `POST /api/v1/submit` | `kind` (`node`, `epicbox` or `pool`), `host`, `operator`. |
-| `GET /api/docs` | OpenAPI. |
+| `GET /api/v1/events.json?min=warn` | The incident log. One entry per incident; `ended_at` is null while it lasts. |
+| `GET /feed.atom?chain=floonet&min=info` | The same log as Atom. Defaults to `warn`, which leaves out one-block reorgs. |
+| `GET /badge/{id}.svg` | Embeddable badge: state and 30-day uptime. Drawn here, not by shields.io. |
+| `GET /api` | Reference. The OpenAPI document is `/api/openapi.json`. |
 
 Per-target fields follow [grin.fail](https://grin.fail/nodes.json)'s shape where they
 overlap, since that is already the de-facto schema in this ecosystem. Two are borrowed
@@ -264,9 +310,10 @@ at `/`.
 
 ## Submissions
 
-Open `POST`, no human in the loop, following monero.fail and grin.fail. Moderation
-queues on volunteer infrastructure go unattended within a month, and a queue nobody
-empties is worse than none.
+Open `POST`, following monero.fail and grin.fail, with automated checks first and a
+human decision last. Nothing reaches the board without an operator approving it in
+`/admin`: publishing a stranger's host to every consumer of the API is a decision, and
+the checks exist so the reviewer is reading evidence rather than a claim.
 
 ```sh
 curl -X POST https://status.btlabs.uk/api/v1/submit \
@@ -285,7 +332,9 @@ What happens:
    chain is **detected** from the tip and compared to the fleet; a submitter's claim
    about which network they serve is not evidence. For a relay, the handshake must
    yield a `Challenge`.
-5. On three passes it is promoted to `targets` and appears on the board.
+5. On three passes it is marked `verified` and waits in the review queue at `/admin`.
+   Approving it creates the target; rejecting it keeps the record, so the same host
+   cannot simply be resubmitted.
 6. A submitted target that has never once succeeded and has failed 500 consecutive
    checks deletes itself. Seeds never do.
 
@@ -411,7 +460,7 @@ uv run epic-status prune --days 7     # drop old successes, then VACUUM
 journalctl -u epic-status -f
 ```
 
-**Back up `data/status.db`.** Uptime history and `last_ok_at` cannot be reconstructed
+**Back up `data/status.db`.** Uptime history, the incident log and `last_ok_at` cannot be reconstructed
 from anything — no node reports when it was last up. Everything else in the database
 is derived and rebuilt at boot. SQLite runs in WAL mode; `sqlite3 status.db ".backup
 out.db"` is safe against a running service.
@@ -449,20 +498,28 @@ Layout:
 
 ```
 src/epic_status/
-  models.py      typed boundary — probe results, targets, snapshot
+  models.py      typed boundary — probe results, targets, events, snapshot
   config.py      settings, and the committed seed registry
-  db.py          SQLite; checks and rollups are the irreplaceable state
+  db.py          SQLite; checks, rollups and events are the irreplaceable state
   net.py         address validation, pinned-IP connections, cert expiry
-  probes/        node.py (get_tip, get_version, get_header) · epicbox.py (Challenge)
-                 pool.py (per-pool stats adapters)
+  probes/        node.py (get_tip, get_version, get_header, CORS preflight)
+                 epicbox.py (Challenge) · pool.py (per-pool stats adapters)
   geo.py         RDAP provider and location
   releases.py    the published node/wallet/protocol versions, a committed constant
   score.py       three states, fork detection, the 0–100 score
+  chain.py       recent canonical headers, reorg detection, the chain panel
+  events.py      the incident log: open, settle, close
   poller.py      the sweep loop and the in-memory snapshot
-  submit.py      submission validation and promotion
-  api.py         routes, JSON schema, security headers
+  submit.py      submission validation
+  vantage.py     remote probers: signing, ingest, and the push loop
+  api.py         public routes and JSON serialisation
+  admin_routes.py  the /admin dashboard's routes
+  admin.py       passwords, sessions, CSRF and login rate limiting
+  web.py         response helpers shared by both route modules: CSP, CORS, JSON
+  schemas.py     the published OpenAPI response shapes
   render.py      Jinja environment and filters
-  flags.py       inline SVG flags
+  badges.py      embeddable SVG badges
+  flags.py · icons.py   inline SVG flags and icons
   templates/ static/
 ops/             systemd unit and nginx vhost, with install commands
 config/          targets.toml
@@ -470,15 +527,52 @@ config/          targets.toml
 
 ## Deliberate non-goals
 
-- **No alerting.** If you want Discord or Telegram notifications and 30-day uptime
-  badges, run [Gatus](https://github.com/TwiN/gatus) alongside and push to its
-  external-endpoints API. Reimplementing that here would be worse than it.
-- **Mainnet only.** Floonet is nearly free to add — the chain is detected from the tip
-  — but it doubles the rows a newcomer has to read.
-- **One vantage point.** `prober_id` is on every stored check from the first schema so
-  a second prober in another region is additive rather than a migration, but there is
-  no push endpoint yet. Retrofitting the column would have been impossible: you cannot
-  say after the fact where a measurement was taken from.
+- **No push alerting.** The incident log is published as Atom at `/feed.atom`, which a
+  feed reader or a feed-to-chat bot can turn into notifications; this service sends
+  nothing itself. For Discord or Telegram notifications with escalation, run
+  [Gatus](https://github.com/TwiN/gatus) alongside and push to its external-endpoints
+  API. Reimplementing that here would be worse than it.
+- **Floonet is a second board, not a filter.** `/?chain=floonet` is scored against
+  floonet's own tip and never mixed into mainnet's numbers, lists or score. Public
+  submissions are mainnet-only; floonet hosts belong in the committed registry.
+- **Remote probers are evidence, not votes.** See below: a second vantage point is shown
+  beside each verdict and never averaged into it.
+
+## Second vantage point
+
+`prober_id` has been on every stored check since the first schema, so a second prober is
+additive rather than a migration. Another machine runs `epic-status push`, probes the
+hub's nodes and relays with the same code every 30 seconds, and posts signed batches to
+`POST /api/v1/probes`.
+
+```sh
+# on the hub: generate a key, add the printed line to the unit's environment, restart
+uv run epic-status prober-key btlabs-fra
+
+# on the remote
+EPIC_STATUS_PUSH_SECRET=… uv run epic-status push --hub https://status.btlabs.uk --id btlabs-fra
+```
+
+- **Authentication** is an HMAC-SHA256 over the prober id, a timestamp and the exact body,
+  with a per-prober secret. The hub refuses a timestamp more than five minutes off or not
+  newer than the last one accepted, so a captured request cannot be replayed.
+- **The pusher needs no target config.** It reads the list from the hub's public
+  `status.json` and applies the same address checks before connecting anywhere.
+- **Remote checks never change a row's state, failure count or uptime.** Those are the
+  hub's own. They appear in the expanded row as "from btlabs-fra: answered · 41 ms" and in
+  the API as `vantages`. "Down from London, fine from Frankfurt" is the answer a second
+  vantage point exists to give, and averaging would erase it.
+- Uptime and the recent-checks strip are per prober. Changing `PROBER_ID` starts a new
+  series rather than relabelling the old one, because it is a different vantage point.
+
+## Review dashboard
+
+`/admin`, registered only when `ADMIN_PASSWORD_HASH` is set; otherwise it is a 404 rather
+than a login form. Approve or reject submissions, edit operator, label, notes and location
+per target, and disable a host without deleting its history. An edit made here is pinned
+against `config/targets.toml`, so the next restart does not revert it. scrypt from the
+standard library, in-memory sessions, CSRF on every mutation, and failed logins
+rate-limited per address; `src/epic_status/admin.py` explains each choice.
 
 ## Prior art
 
