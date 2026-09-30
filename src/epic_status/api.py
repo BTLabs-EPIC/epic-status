@@ -23,7 +23,7 @@ import hashlib
 import json
 import logging
 import secrets
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,27 +31,25 @@ from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import admin
+from . import admin_routes, schemas
 from .config import Settings, load_seed_targets
 from .config import settings as get_settings
 from .db import Database
-from .models import Chain, Kind, Snapshot, Source, State, Target, TargetStatus
+from .models import Chain, Kind, Snapshot, State, TargetStatus
 from .net import build_client
 from .poller import Poller
 from .render import (
     probe_url,
-    render_admin,
-    render_admin_login,
     render_api,
     render_board,
     render_history,
     render_submit,
 )
-from . import schemas
 from .submit import SubmissionError, Validator, accept
+from .web import client_address, cors, json_response, security_headers, stamp
 
 log = logging.getLogger("epic_status.api")
 
@@ -250,7 +248,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # can only reach the hosts this page is showing. A union across both
                 # chains would widen the policy on the mainnet board to origins it
                 # never contacts.
-                **_security_headers(connect=_probe_origins(snap)),
+                **security_headers(connect=_probe_origins(snap)),
             },
         )
 
@@ -278,7 +276,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             chains=service.chains(),
         )
         return HTMLResponse(
-            html, headers={"cache-control": "no-store", **_security_headers()}
+            html, headers={"cache-control": "no-store", **security_headers()}
         )
 
     @app.api_route(
@@ -290,7 +288,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def add_form() -> HTMLResponse:
         return HTMLResponse(
             render_submit(snapshot=service.snapshot, settings=settings),
-            headers={"cache-control": "no-store", **_security_headers()},
+            headers={"cache-control": "no-store", **security_headers()},
         )
 
     @app.post("/add", response_class=HTMLResponse, include_in_schema=False)
@@ -313,7 +311,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 submitted_host=host,
             ),
             status_code=200 if message else 400,
-            headers={"cache-control": "no-store", **_security_headers()},
+            headers={"cache-control": "no-store", **security_headers()},
         )
 
     # Both forms. nginx normalises /api to /api/ because a /api/ prefix location
@@ -323,7 +321,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def api_reference() -> HTMLResponse:
         return HTMLResponse(
             render_api(settings=settings),
-            headers={"cache-control": "no-store", **_security_headers()},
+            headers={"cache-control": "no-store", **security_headers()},
         )
 
     @app.api_route("/api/docs", methods=["GET", "HEAD"], include_in_schema=False)
@@ -332,463 +330,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         page that could not load under this service's CSP."""
         return Response(status_code=308, headers={"location": "/api"})
 
-
-    # ------------------------------------------------------------------- admin
-    #
-    # The one surface that is not public and not read-only. Approving a submission makes
-    # this service start probing a stranger's host and publishes it to every consumer of
-    # the API, so it sits behind a login, a CSRF token and a rate limit.
-    #
-    # Registered only when a password hash is configured. Without one these routes do not
-    # exist and /admin is an ordinary 404 — not a login form, which would advertise the
-    # surface, and not a default credential, which on a self-hosted service is a published
-    # one.
-    sessions = admin.Sessions()
-
-    if settings.admin_password_hash:
-        _ADMIN_COOKIE = "epic_status_admin"
-
-        def _admin_cookie(response: Response, token: str) -> None:
-            response.set_cookie(
-                _ADMIN_COOKIE,
-                token,
-                max_age=admin.SESSION_TTL_S,
-                httponly=True,
-                secure=settings.admin_cookie_secure,
-                samesite="strict",
-                path="/admin",
-            )
-
-        def _session(request: Request) -> admin.Session | None:
-            return sessions.get(request.cookies.get(_ADMIN_COOKIE))
-
-        def _login_page(error: str | None = None, status_code: int = 200) -> HTMLResponse:
-            return HTMLResponse(
-                render_admin_login(settings=settings, error=error),
-                status_code=status_code,
-                headers={"cache-control": "no-store", **_security_headers()},
-            )
-
-        def _dashboard(session: admin.Session, notice: str | None = None) -> HTMLResponse:
-            return HTMLResponse(
-                render_admin(
-                    settings=settings,
-                    submissions=service.db.submissions(),
-                    counts=service.db.submission_counts(),
-                    # The number actually on the board, not the number of submissions ever
-                    # approved. Those differ for every seed target, which is most of them:
-                    # the old value read 0 while eight hosts were being published.
-                    on_board=len(service.db.targets()),
-                    # Disabled targets included: a disabled host is exactly the one an
-                    # admin needs to find in order to re-enable it, and hiding it here
-                    # would make the action unreachable.
-                    targets=service.db.targets(enabled_only=False),
-                    csrf=session.csrf,
-                    user=session.user,
-                    notice=notice,
-                ),
-                headers={
-                    "cache-control": "no-store",
-                    # A review dashboard has no business in a shared cache or a
-                    # search index, and `noindex` is cheap insurance against the
-                    # latter even behind a login.
-                    "x-robots-tag": "noindex, nofollow",
-                    **_security_headers(),
-                },
-            )
-
-        @app.api_route(
-            "/admin", methods=["GET", "HEAD"], response_class=HTMLResponse,
-            include_in_schema=False,
-        )
-        async def admin_home(request: Request) -> HTMLResponse:
-            session = _session(request)
-            return _dashboard(session) if session else _login_page()
-
-        @app.post("/admin/login", response_class=HTMLResponse, include_in_schema=False)
-        async def admin_login(
-            request: Request,
-            user: Annotated[str, Form()] = "",
-            password: Annotated[str, Form()] = "",
-        ) -> Response:
-            client = _client_address(request)
-            if sessions.locked_out(client):
-                log.warning("admin login refused, too many attempts from %s", client)
-                return _login_page("Too many attempts. Try again later.", 429)
-            if not admin.check_credentials(
-                user=user,
-                password=password,
-                expected_user=settings.admin_user,
-                stored_hash=settings.admin_password_hash,
-            ):
-                sessions.record_failure(client)
-                log.warning("admin login failed from %s", client)
-                # One message for both halves. "No such user" would let anyone
-                # enumerate the account name.
-                return _login_page("Wrong username or password.", 401)
-            sessions.clear_failures(client)
-            session = sessions.create(settings.admin_user)
-            log.info("admin login from %s", client)
-            # Redirect rather than render, so a refresh does not repost the password.
-            response = Response(status_code=303, headers={"location": "/admin"})
-            _admin_cookie(response, session.token)
-            return response
-
-        @app.post("/admin/logout", include_in_schema=False)
-        async def admin_logout(request: Request) -> Response:
-            sessions.destroy(request.cookies.get(_ADMIN_COOKIE))
-            response = Response(status_code=303, headers={"location": "/admin"})
-            response.delete_cookie(_ADMIN_COOKIE, path="/admin")
-            return response
-
-        # ---- JSON endpoints, for the dashboard's per-field saves ----
-        #
-        # The form POSTs below still work and still re-render the page; these exist so the
-        # page does not have to. Keeping both means the dashboard degrades to plain forms
-        # with JavaScript off, which for the one surface that edits the board is worth the
-        # duplication.
-
-        def _json_session(request: Request, csrf: str) -> tuple[admin.Session | None, Response | None]:
-            session = _session(request)
-            if session is None:
-                return None, _json({"ok": False, "error": "signed out"}, status_code=401)
-            if not sessions.valid_csrf(session, csrf):
-                return None, _json({"ok": False, "error": "stale token"}, status_code=403)
-            return session, None
-
-        @app.post("/admin/api/patch", include_in_schema=False)
-        async def admin_patch(
-            request: Request,
-            target_id: Annotated[int, Form()] = 0,
-            field: Annotated[str, Form()] = "",
-            value: Annotated[str, Form()] = "",
-            csrf: Annotated[str, Form()] = "",
-        ) -> Response:
-            """Write one field and say what happened. No redirect, no re-render."""
-            _, refusal = _json_session(request, csrf)
-            if refusal is not None:
-                return refusal
-            target = service.db.target(target_id)
-            if target is None:
-                return _json({"ok": False, "error": "no such target"}, status_code=404)
-            if not service.db.set_target_field(target_id, field, value):
-                return _json({"ok": False, "error": "field not editable"}, status_code=400)
-            saved = service.db.target(target_id)
-            assert saved is not None
-            log.info("admin set %s.%s", saved.slug, field)
-            # The stored value is returned rather than echoed from the request, so the page
-            # shows what the database holds — a trimmed string or an uppercased country code
-            # is not what was typed.
-            return _json(
-                {
-                    "ok": True,
-                    "host": saved.display_host,
-                    "field": field,
-                    "listing": saved.listing,
-                    "verified": saved.verified,
-                    "enabled": saved.enabled,
-                    "value": {
-                        "operator": saved.operator or "",
-                        "label": saved.label or "",
-                        "notes": saved.notes or "",
-                        "country": saved.geo.country_manual or "",
-                        "provider": saved.geo.provider_manual or "",
-                        "city": saved.geo.city_manual or "",
-                    }.get(field, value),
-                }
-            )
-
-        @app.post("/admin/api/request/remove", include_in_schema=False)
-        async def admin_request_remove(
-            request: Request,
-            submission_id: Annotated[int, Form()] = 0,
-            csrf: Annotated[str, Form()] = "",
-        ) -> Response:
-            """Delete a request outright, as opposed to rejecting it.
-
-            Rejecting keeps the record and, through the unique constraint on (kind, host),
-            keeps the host from being resubmitted. Deleting frees it — right for a typo or a
-            test entry, wrong for something genuinely declined.
-            """
-            _, refusal = _json_session(request, csrf)
-            if refusal is not None:
-                return refusal
-            row = service.db.submission(submission_id)
-            if row is None:
-                return _json({"ok": False, "error": "gone"}, status_code=404)
-            host = str(row["host"])
-            if not service.db.delete_submission(submission_id):
-                return _json({"ok": False, "error": "nothing removed"}, status_code=409)
-            log.info("admin deleted request %s", host)
-            return _json({"ok": True, "host": host})
-
-        @app.post("/admin/api/remove", include_in_schema=False)
-        async def admin_api_remove(
-            request: Request,
-            target_id: Annotated[int, Form()] = 0,
-            csrf: Annotated[str, Form()] = "",
-        ) -> Response:
-            _, refusal = _json_session(request, csrf)
-            if refusal is not None:
-                return refusal
-            target = service.db.target(target_id)
-            if target is None:
-                return _json({"ok": False, "error": "no such target"}, status_code=404)
-            if not service.db.delete_target_admin(target_id):
-                return _json({"ok": False, "error": "nothing removed"}, status_code=409)
-            log.warning("admin removed target %s and its history", target.slug)
-            return _json(
-                {
-                    "ok": True,
-                    "host": target.display_host,
-                    # A seed is reloaded from config/targets.toml at every boot, so the row
-                    # is gone but the target is not. The page says so instead of implying a
-                    # permanence it does not have.
-                    "returns_on_restart": target.source is Source.SEED,
-                }
-            )
-
-        @app.post("/admin/review/json", include_in_schema=False)
-        async def admin_review_json(
-            request: Request,
-            submission_id: Annotated[int, Form()] = 0,
-            decision: Annotated[str, Form()] = "",
-            csrf: Annotated[str, Form()] = "",
-        ) -> Response:
-            _, refusal = _json_session(request, csrf)
-            if refusal is not None:
-                return refusal
-            row = service.db.submission(submission_id)
-            if row is None:
-                return _json({"ok": False, "error": "gone"}, status_code=404)
-            if row["status"] in ("accepted", "rejected"):
-                return _json({"ok": False, "error": "already decided"}, status_code=409)
-            host = str(row["host"])
-            if decision == "approve":
-                service.db.insert_target(
-                    Target(
-                        kind=Kind(row["kind"]),
-                        # Public submissions are mainnet. The form does not offer a
-                        # chain and should not: floonet hosts are ours and belong in
-                        # the committed registry, where a reviewer can see them, and a
-                        # stranger's endpoint claiming to be floonet is a claim this
-                        # service has no way to check.
-                        chain=Chain.MAINNET,
-                        slug=host,
-                        endpoint=str(row["endpoint"]),
-                        display_host=host,
-                        operator=row["operator"],
-                        source=Source.SUBMITTED,
-                    )
-                )
-                if row["country"]:
-                    for candidate in service.db.targets(enabled_only=False):
-                        if candidate.slug == host and candidate.id is not None:
-                            service.db.set_target_field(
-                                candidate.id, "country", str(row["country"])
-                            )
-                            break
-                service.db.review_submission(
-                    submission_id, status="accepted", note="approved"
-                )
-                log.info("admin approved %s", host)
-                return _json({"ok": True, "host": host, "status": "accepted"})
-            if decision == "reject":
-                service.db.review_submission(
-                    submission_id, status="rejected", note="rejected"
-                )
-                log.info("admin rejected %s", host)
-                return _json({"ok": True, "host": host, "status": "rejected"})
-            return _json({"ok": False, "error": "unknown decision"}, status_code=400)
-
-        @app.post("/admin/remove", response_class=HTMLResponse, include_in_schema=False)
-        async def admin_remove(
-            request: Request,
-            target_id: Annotated[int, Form()] = 0,
-            csrf: Annotated[str, Form()] = "",
-        ) -> Response:
-            """Delete a target and everything measured about it.
-
-            Irreversible, and it takes real history with it: `checks` and `rollup_hourly`
-            cascade on `target_id`, and nothing can reconstruct when a host was last up.
-            That is why the alternative exists and is one click away — unticking `Checked`
-            stops the probing and keeps the record, which is what an operator wants almost
-            every time. Removal is for a row that should never have been created.
-            """
-            session = _session(request)
-            if session is None:
-                return _login_page("Session expired.", 401)
-            if not sessions.valid_csrf(session, csrf):
-                return _dashboard(session, notice="Request rejected: stale form. Retry.")
-            target = service.db.target(target_id)
-            if target is None:
-                return _dashboard(session, notice="No such target.")
-            if not service.db.delete_target_admin(target_id):
-                return _dashboard(session, notice="Nothing was removed.")
-            log.warning("admin removed target %s and its history", target.slug)
-            if target.source is Source.SEED:
-                # A seed is reloaded from config/targets.toml at every boot, so deleting the
-                # row here is temporary. Saying so is the difference between a working
-                # control and one that appears to work until the next restart.
-                return _dashboard(
-                    session,
-                    notice=(
-                        f"{target.display_host} removed — but it is a seed target and will "
-                        "return on the next restart unless it is also deleted from "
-                        "config/targets.toml. Untick Checked to keep it off the board."
-                    ),
-                )
-            return _dashboard(session, notice=f"{target.display_host} removed.")
-
-        @app.post("/admin/request/remove", response_class=HTMLResponse, include_in_schema=False)
-        async def admin_request_remove_form(
-            request: Request,
-            submission_id: Annotated[int, Form()] = 0,
-            csrf: Annotated[str, Form()] = "",
-        ) -> Response:
-            """The no-JavaScript path for the same thing."""
-            session = _session(request)
-            if session is None:
-                return _login_page("Session expired.", 401)
-            if not sessions.valid_csrf(session, csrf):
-                return _dashboard(session, notice="Request rejected: stale form. Retry.")
-            row = service.db.submission(submission_id)
-            if row is None:
-                return _dashboard(session, notice="That request no longer exists.")
-            host = str(row["host"])
-            service.db.delete_submission(submission_id)
-            log.info("admin deleted request %s", host)
-            return _dashboard(session, notice=f"Request for {host} deleted.")
-
-        @app.post("/admin/review", response_class=HTMLResponse, include_in_schema=False)
-        async def admin_review(
-            request: Request,
-            submission_id: Annotated[int, Form()] = 0,
-            decision: Annotated[str, Form()] = "",
-            csrf: Annotated[str, Form()] = "",
-        ) -> Response:
-            session = _session(request)
-            if session is None:
-                return _login_page("Session expired.", 401)
-            if not sessions.valid_csrf(session, csrf):
-                log.warning("admin review rejected: bad CSRF token")
-                return _dashboard(session, notice="Request rejected: stale form. Retry.")
-
-            row = service.db.submission(submission_id)
-            if row is None:
-                return _dashboard(session, notice="That request no longer exists.")
-            if row["status"] in ("accepted", "rejected"):
-                return _dashboard(session, notice="Already decided.")
-
-            host = str(row["host"])
-            if decision == "approve":
-                # The target is created here, by a person, rather than by the validator.
-                # This is the only path onto the board for a submitted host.
-                service.db.insert_target(
-                    Target(
-                        kind=Kind(row["kind"]),
-                        # Mainnet, for the reason given at the other approval site: the
-                        # form offers no chain, and an unverifiable claim to be floonet
-                        # is not a claim this service should publish.
-                        chain=Chain.MAINNET,
-                        slug=host,
-                        endpoint=str(row["endpoint"]),
-                        display_host=host,
-                        operator=row["operator"],
-                        source=Source.SUBMITTED,
-                    )
-                )
-                # The submitter's country hint becomes the hand-set override, which is
-                # where a correction belongs: RDAP is routinely wrong and the person running
-                # the host is not. An admin can change or clear it in the editor below.
-                if row["country"]:
-                    created = service.db.targets(enabled_only=False)
-                    for candidate in created:
-                        if candidate.slug == host and candidate.id is not None:
-                            service.db.set_geo_overrides(
-                                candidate.id,
-                                country=str(row["country"]),
-                                provider="",
-                                city="",
-                            )
-                            break
-                service.db.review_submission(
-                    submission_id, status="accepted", note="approved"
-                )
-                log.info("admin approved %s", host)
-                return _dashboard(session, notice=f"{host} added to the board.")
-
-            if decision == "reject":
-                service.db.review_submission(
-                    submission_id, status="rejected", note="rejected"
-                )
-                log.info("admin rejected %s", host)
-                return _dashboard(session, notice=f"{host} rejected.")
-
-            return _dashboard(session, notice="Unknown decision.")
-
-
-        @app.post("/admin/target", response_class=HTMLResponse, include_in_schema=False)
-        async def admin_target(
-            request: Request,
-            target_id: Annotated[int, Form()] = 0,
-            csrf: Annotated[str, Form()] = "",
-            operator: Annotated[str, Form()] = "",
-            label: Annotated[str, Form()] = "",
-            notes: Annotated[str, Form()] = "",
-            country: Annotated[str, Form()] = "",
-            provider: Annotated[str, Form()] = "",
-            city: Annotated[str, Form()] = "",
-            toggle: Annotated[str, Form()] = "",
-        ) -> Response:
-            """Edit a monitored target.
-
-            Everything editable here is a fact nothing can derive: who runs a host, what to
-            call it, and the location fields where RDAP is routinely wrong. Identity —
-            `slug`, `kind`, `endpoint` — is not editable, because `checks.target_id` points
-            at this row and repointing it would attribute one host's history to another.
-
-            The geo values are written as `*_manual` overrides rather than over the
-            registry's own answer, so a weekly refresh cannot undo a correction and an
-            empty field restores whatever RDAP said.
-            """
-            session = _session(request)
-            if session is None:
-                return _login_page("Session expired.", 401)
-            if not sessions.valid_csrf(session, csrf):
-                return _dashboard(session, notice="Request rejected: stale form. Retry.")
-
-            target = service.db.target(target_id)
-            if target is None:
-                return _dashboard(session, notice="No such target.")
-
-            # The two flags are no longer checkboxes on this form, so they are not read from
-            # it: an absent checkbox is indistinguishable from an unticked one, and with the
-            # inputs gone that would have silently cleared both on every text edit. They move
-            # only through an explicit toggle, which is what the tags submit.
-            service.db.update_target_fields(
-                target_id,
-                operator=operator.strip(),
-                label=label.strip(),
-                notes=notes.strip(),
-                verified=target.verified,
-                enabled=target.enabled,
-            )
-            if toggle == "verified":
-                service.db.set_target_field(
-                    target_id, "verified", "0" if target.verified else "1"
-                )
-            elif toggle == "enabled":
-                service.db.set_target_field(
-                    target_id, "enabled", "0" if target.enabled else "1"
-                )
-            service.db.set_geo_overrides(
-                target_id, country=country, provider=provider, city=city
-            )
-            # No cache to invalidate: `Poller.sweep` reads `db.targets()` at the top of
-            # every sweep, so an edit is live on the next one — within 5 seconds for a node.
-            log.info("admin edited target %s", target.slug)
-            return _dashboard(session, notice=f"{target.display_host} updated.")
+    admin_routes.register(app, service)
 
     # -------------------------------------------------------------------- api
 
@@ -810,13 +352,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             503: {"model": schemas.ErrorResponse, "description": "No sweep has completed yet."},
         },
     )
-    async def status_json(request: Request, chain: str = "mainnet") -> Response:
+    async def statusjson_response(request: Request, chain: str = "mainnet") -> Response:
         """`?chain=floonet` for the test network. Absent means mainnet, so every
         existing consumer of this endpoint keeps receiving exactly what it did."""
         selected = _chain_or_404(chain)
         snap = service.snapshot_for(selected)
         if snap is None:
-            return _json(
+            return json_response(
                 {"error": "no data yet", "generated_at": None},
                 status_code=503,
             )
@@ -828,11 +370,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if request.headers.get("if-none-match") == etag:
             # A poller consuming this API costs nothing when nothing has changed,
             # which is the difference between being integrable and being a burden.
-            return Response(status_code=304, headers={"etag": etag, **_cors()})
+            return Response(status_code=304, headers={"etag": etag, **cors()})
         return Response(
             body,
             media_type="application/json",
-            headers={"etag": etag, "cache-control": "no-store", **_cors()},
+            headers={"etag": etag, "cache-control": "no-store", **cors()},
         )
 
     @app.head("/api/v1/nodes.json", include_in_schema=False)
@@ -845,7 +387,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             503: {"model": schemas.ErrorResponse},
         },
     )
-    async def nodes_json(healthy: bool = False, chain: str = "mainnet") -> Response:
+    async def nodesjson_response(healthy: bool = False, chain: str = "mainnet") -> Response:
         """A bare list of endpoints, which is what a wallet or an exchange failover
         config actually wants. `?healthy=true` filters to the ones worth using.
 
@@ -856,13 +398,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         selected = _chain_or_404(chain)
         snap = service.snapshot_for(selected)
         if snap is None:
-            return _json({"error": "no data yet"}, status_code=503)
+            return json_response({"error": "no data yet"}, status_code=503)
         rows = [
             s
             for s in snap.nodes
             if not healthy or s.state is State.HEALTHY
         ]
-        return _json(
+        return json_response(
             {
                 "meta": _list_meta(
                     describes=f"Epic Cash {selected.value} public node endpoints",
@@ -872,7 +414,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     cadence_s=settings.cadence.node_tip_s,
                     settings=settings,
                 ),
-                "generated_at": _stamp(snap.generated_at),
+                "generated_at": stamp(snap.generated_at),
                 "chain": snap.network.chain.value,
                 "tip_height": snap.network.tip_height,
                 "nodes": [s.target.endpoint for s in rows],
@@ -889,13 +431,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             503: {"model": schemas.ErrorResponse},
         },
     )
-    async def epicbox_json(healthy: bool = False, chain: str = "mainnet") -> Response:
+    async def epicboxjson_response(healthy: bool = False, chain: str = "mainnet") -> Response:
         selected = _chain_or_404(chain)
         snap = service.snapshot_for(selected)
         if snap is None:
-            return _json({"error": "no data yet"}, status_code=503)
+            return json_response({"error": "no data yet"}, status_code=503)
         rows = [s for s in snap.epicbox if not healthy or s.state is State.HEALTHY]
-        return _json(
+        return json_response(
             {
                 "meta": _list_meta(
                     describes="Epicbox relay hosts, the transport wallets use for addresses",
@@ -905,7 +447,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     cadence_s=settings.cadence.epicbox_s,
                     settings=settings,
                 ),
-                "generated_at": _stamp(snap.generated_at),
+                "generated_at": stamp(snap.generated_at),
                 "chain": snap.network.chain.value,
                 "epicbox": [s.target.display_host for s in rows],
             }
@@ -925,13 +467,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             503: {"model": schemas.ErrorResponse},
         },
     )
-    async def pools_json(healthy: bool = False, chain: str = "mainnet") -> Response:
+    async def poolsjson_response(healthy: bool = False, chain: str = "mainnet") -> Response:
         selected = _chain_or_404(chain)
         snap = service.snapshot_for(selected)
         if snap is None:
-            return _json({"error": "no data yet"}, status_code=503)
+            return json_response({"error": "no data yet"}, status_code=503)
         rows = [s for s in snap.pools if not healthy or s.state is State.HEALTHY]
-        return _json(
+        return json_response(
             {
                 "meta": _list_meta(
                     describes="Mining pools whose stats API answered",
@@ -941,7 +483,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     cadence_s=settings.cadence.pool_s,
                     settings=settings,
                 ),
-                "generated_at": _stamp(snap.generated_at),
+                "generated_at": stamp(snap.generated_at),
                 "chain": snap.network.chain.value,
                 "pools": [s.target.display_host for s in rows],
             }
@@ -979,20 +521,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # targets at all as perfectly healthy. It has no data, so it is not.
         ok = bool(snaps) and all(s is not None and not s.stale for s in snaps.values())
         newest = [s.generated_at for s in snaps.values() if s is not None]
-        return _json(
+        return json_response(
             {
                 "service": "epic-status",
                 "version": "0.1.0",
                 "prober_id": settings.prober_id,
                 "has_data": any(s is not None for s in snaps.values()),
                 "stale": not ok,
-                "generated_at": _stamp(max(newest)) if newest else None,
+                "generated_at": stamp(max(newest)) if newest else None,
                 "chains": {
                     c.value: {
                         "has_data": snap is not None,
                         "stale": snap.stale if snap is not None else True,
                         "generated_at": (
-                            _stamp(snap.generated_at) if snap is not None else None
+                            stamp(snap.generated_at) if snap is not None else None
                         ),
                     }
                     for c, snap in snaps.items()
@@ -1030,14 +572,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             service, request, kind, host, operator, country
         )
         if error:
-            return _json({"ok": False, "error": error}, status_code=400)
+            return json_response({"ok": False, "error": error}, status_code=400)
         # `message` is written for a human reading the form; a script needs the same facts
         # as values. `review_required` is unconditionally true and says so explicitly —
         # this field previously read `auto_promoted: true`, which stopped being true the
         # moment submissions started waiting for a decision, and a stale boolean in a
         # response is worse than no boolean at all. A caller polling for its host to
         # appear needs to know that nothing will happen until a person acts.
-        return _json(
+        return json_response(
             {
                 "ok": True,
                 "message": message,
@@ -1098,7 +640,7 @@ async def _do_submit(
             kind=parsed_kind,
             raw_host=host,
             operator=operator or None,
-            submitter_address=_client_address(request),
+            submitter_address=client_address(request),
             salt=service.submitter_salt,
             country=country or None,
         )
@@ -1107,18 +649,6 @@ async def _do_submit(
     return message, None
 
 
-def _client_address(request: Request) -> str:
-    """The submitter's address, for rate limiting only.
-
-    `x-forwarded-for` is trusted because this service is designed to run behind a
-    reverse proxy on loopback and cannot be reached directly. If you bind it to a
-    public interface — which the settings tell you not to do — this becomes
-    spoofable and the rate limit becomes decorative.
-    """
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
 
 
 def _chain_or_404(raw: str) -> Chain:
@@ -1163,70 +693,6 @@ def _probe_origins(snapshot: Snapshot | None) -> list[str]:
     return sorted(origins)
 
 
-def _security_headers(*, connect: Sequence[str] = ()) -> dict[str, str]:
-    """Set here rather than in nginx so a self-hoster behind any proxy gets them.
-
-    No `unsafe-inline` anywhere, for scripts or styles. Every page's JavaScript is a real
-    file under /static, which is also why it is auditable, and every style is a class in
-    app.css rather than a `style=` attribute.
-
-    This function used to take `relaxed=True`, which added `style-src 'unsafe-inline'`
-    for `/api` alone: the reference was a vendored web component that injected styles
-    into its own shadow roots, and no narrower keyword allows that. The reference is now
-    a first-party page, so the exception is gone and the policy is the same on every
-    route. Deleting a special case in a CSP is worth more than the page that needed it.
-
-    `connect` is the one remaining variation, and it is additive rather than relaxing: the
-    board passes the origins of the hosts it lists so a reader can measure them from their
-    own browser. Every other route is left at `'self'`.
-    """
-    connect_src = " ".join(("'self'", *connect))
-    return {
-        "content-security-policy": (
-            "default-src 'none'; "
-            "script-src 'self'; "
-            "style-src 'self'; "
-            "img-src 'self' data:; "
-            # Without this the self-hosted Montserrat files are blocked by
-            # default-src and the page silently falls back to the system stack.
-            # Caught by screenshotting the real page rather than by any test.
-            "font-src 'self'; "
-            f"connect-src {connect_src}; "
-            "form-action 'self'; "
-            "base-uri 'none'; "
-            "frame-ancestors 'none'"
-        ),
-        "referrer-policy": "no-referrer",
-        "x-content-type-options": "nosniff",
-        "cross-origin-opener-policy": "same-origin",
-    }
-
-
-def _cors() -> dict[str, str]:
-    """Read-only cross-origin access, on the JSON routes only.
-
-    Open on purpose: the point of publishing this is that wallets, explorers and
-    exchanges can read it from a browser without proxying it.
-    """
-    return {
-        "access-control-allow-origin": "*",
-        "access-control-allow-methods": "GET",
-        "vary": "origin",
-    }
-
-
-def _json(payload: dict[str, Any], status_code: int = 200) -> Response:
-    return JSONResponse(
-        payload,
-        status_code=status_code,
-        headers={"cache-control": "no-store", **_cors()},
-    )
-
-
-def _stamp(dt: datetime | None) -> str | None:
-    if dt is None:
-        return None
-    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _serialise(snap: Snapshot, settings: Settings) -> dict[str, Any]:
@@ -1255,7 +721,7 @@ def _serialise(snap: Snapshot, settings: Settings) -> dict[str, Any]:
             "docs": f"{settings.site_url.rstrip('/')}/api",
             "schema": f"{settings.site_url.rstrip('/')}/api/openapi.json",
         },
-        "generated_at": _stamp(snap.generated_at),
+        "generated_at": stamp(snap.generated_at),
         "stale": snap.stale,
         "prober": {
             "id": snap.prober_id,
@@ -1271,7 +737,7 @@ def _serialise(snap: Snapshot, settings: Settings) -> dict[str, Any]:
             "tip_height": net.tip_height,
             "tip_hash": net.tip_hash,
             "tip_age_s": net.tip_age_s,
-            "tip_mined_at": _stamp(net.tip_mined_at),
+            "tip_mined_at": stamp(net.tip_mined_at),
             "health_score": net.health_score,
             "forked": net.forked,
             "fork_detail": net.fork_detail,
@@ -1360,8 +826,8 @@ def _serialise_target(status: TargetStatus) -> dict[str, Any]:
         "reason": status.reason.value,
         "detail": status.detail,
         "latency_ms": status.latency_ms,
-        "last_checked_at": _stamp(status.last_checked_at),
-        "last_ok_at": _stamp(status.last_ok_at),
+        "last_checked_at": stamp(status.last_checked_at),
+        "last_ok_at": stamp(status.last_ok_at),
         "last_error": status.last_error,
         "error_count": status.consecutive_failures,
         # Rounded to four places. `0.9977628635346756` is float64 noise dressed as
@@ -1403,5 +869,5 @@ def _serialise_target(status: TargetStatus) -> dict[str, Any]:
         # The last block the pool FOUND, not its chain tip. Named so that no
         # consumer mistakes it for one and compares it to tip_height.
         row["last_block_height"] = status.last_block_height
-        row["last_block_at"] = _stamp(status.last_block_at)
+        row["last_block_at"] = stamp(status.last_block_at)
     return row

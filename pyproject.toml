@@ -45,7 +45,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-epic_status = ["static/*", "templates/*"]
+epic_status = ["static/*", "static/**/*", "templates/*"]
 
 [tool.mypy]
 python_version = "3.12"
