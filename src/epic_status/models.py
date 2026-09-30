@@ -466,6 +466,40 @@ class ChainActivity(BaseModel):
     deepest_reorg_24h: int = 0
 
 
+class Vantage(BaseModel):
+    """The newest check of one target from a prober other than this one."""
+
+    prober_id: str
+    ok: bool
+    latency_ms: int | None = None
+    error: str | None = None
+    at: datetime
+
+
+class RemoteCheck(BaseModel):
+    """One check in a batch pushed by a remote prober. Validated on arrival: it comes
+    from another machine and crosses a trust boundary like any probe response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: str = Field(max_length=253)
+    """The target's slug on the hub."""
+    kind: Kind
+    ok: bool
+    latency_ms: int | None = Field(default=None, ge=0, le=600_000)
+    height: int | None = Field(default=None, ge=0)
+    tip_hash: str | None = Field(default=None, max_length=128)
+    error: str | None = Field(default=None, max_length=300)
+    checked_at: datetime
+
+
+class ProbeBatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prober_id: str = Field(min_length=1, max_length=64)
+    checks: list[RemoteCheck] = Field(max_length=500)
+
+
 class TargetStatus(BaseModel):
     """A target plus its current computed verdict. This is what the board renders
     and what the JSON API serialises."""
@@ -508,6 +542,8 @@ class TargetStatus(BaseModel):
     uptime_30d: float | None = None
     history: list[Check] = Field(default_factory=list)
     """Most recent checks, oldest first. Rendered as the recent-checks strip."""
+    vantages: list[Vantage] = Field(default_factory=list)
+    """What other probers saw recently. Evidence beside the verdict, never part of it."""
 
 
 class NetworkSummary(BaseModel):

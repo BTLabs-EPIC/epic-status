@@ -389,6 +389,18 @@
       </div>
       {% endif %}
 
+      {#
+        Other vantage points, beside this one's verdict rather than folded into it. The
+        one question a single prober cannot answer — is it them or is it us — is answered
+        by exactly these lines disagreeing with the state at the end of the row.
+      #}
+      {% for v in status.vantages %}
+      <div>
+        <dt>from {{ v.prober_id }}</dt>
+        <dd>{% if v.ok %}answered{% if v.latency_ms is not none %} · {{ v.latency_ms | ms }}{% endif %}{% else %}failed{% if v.error %} · {{ v.error }}{% endif %}{% endif %}</dd>
+      </div>
+      {% endfor %}
+
       {% if t.created_at %}
       <div>
         <dt>listed since</dt>

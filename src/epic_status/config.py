@@ -127,6 +127,11 @@ class Settings(BaseSettings):
     false only to reach /admin over http on a development machine; on anything reachable
     it must stay true."""
 
+    prober_keys: str = ""
+    """Remote probers allowed to push checks here, as `id:secret,id2:secret2`. Empty —
+    the default — means `POST /api/v1/probes` is not registered at all. Secrets come
+    from `epic-status prober-key`; see `vantage`."""
+
     submissions_enabled: bool = True
     max_pending_submissions: int = 200
     submit_probes_required: int = 3

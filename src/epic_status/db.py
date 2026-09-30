@@ -531,6 +531,13 @@ class Database:
         ).fetchone()
         return int(row["id"])
 
+    def target_by_slug(self, kind: Kind, slug: str) -> Target | None:
+        row = self.conn.execute(
+            "SELECT * FROM targets WHERE kind = ? AND slug = ? AND enabled = 1",
+            (kind.value, slug),
+        ).fetchone()
+        return _row_to_target(row) if row is not None else None
+
     def target(self, target_id: int) -> Target | None:
         row = self.conn.execute(
             "SELECT * FROM targets WHERE id = ?", (target_id,)
@@ -841,26 +848,71 @@ class Database:
                     (stamp, error, target_id),
                 )
 
-            hour = stamp[:13] + ":00:00Z"
+            _rollup(conn, target_id, self.prober_id, stamp, ok, latency_ms)
+
+    def record_remote_check(
+        self,
+        *,
+        target_id: int,
+        prober_id: str,
+        ok: bool,
+        latency_ms: int | None,
+        height: int | None,
+        tip_hash: str | None,
+        error: str | None,
+        at: datetime,
+    ) -> None:
+        """A check measured by another prober and pushed here.
+
+        Stored in the same tables under its own `prober_id` — which is what that column
+        has been waiting for since the first schema — but deliberately does **not**
+        touch the denormalised fields on `targets`. The board's verdict, `last_ok_at`
+        and the failure count stay this prober's own: a second vantage point is
+        evidence shown beside the verdict, not a second writer of it.
+        """
+        stamp = _iso(at)
+        state = "healthy" if ok else "down"
+        with self.tx() as conn:
             conn.execute(
                 """
-                INSERT INTO rollup_hourly
-                    (target_id, prober_id, hour, checks, ok_checks, p50_latency_ms)
-                VALUES (?,?,?,1,?,?)
-                ON CONFLICT (target_id, prober_id, hour) DO UPDATE SET
-                    checks = checks + 1,
-                    ok_checks = ok_checks + excluded.ok_checks,
-                    -- A running approximation, not a true median. Storing every
-                    -- latency for 90 days to compute an exact one is not a
-                    -- trade worth making for a number displayed to 0 decimals.
-                    p50_latency_ms = CASE
-                        WHEN excluded.p50_latency_ms IS NULL THEN p50_latency_ms
-                        WHEN p50_latency_ms IS NULL THEN excluded.p50_latency_ms
-                        ELSE (p50_latency_ms * 3 + excluded.p50_latency_ms) / 4
-                    END
+                INSERT INTO checks
+                    (target_id, prober_id, checked_at, ok, state, reason,
+                     latency_ms, height, tip_hash, error)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
                 """,
-                (target_id, self.prober_id, hour, int(ok), latency_ms),
+                (
+                    target_id,
+                    prober_id,
+                    stamp,
+                    int(ok),
+                    state,
+                    "ok" if ok else "remote_failure",
+                    latency_ms,
+                    height,
+                    tip_hash,
+                    error,
+                ),
             )
+            _rollup(conn, target_id, prober_id, stamp, ok, latency_ms)
+
+    def vantages(self, target_id: int, since: datetime) -> list[sqlite3.Row]:
+        """The newest check from each *other* prober since `since`.
+
+        SQLite returns the bare columns from the row that produced `MAX(checked_at)`,
+        which is the documented behaviour this query relies on.
+        """
+        return list(
+            self.conn.execute(
+                """
+                SELECT prober_id, ok, latency_ms, error, MAX(checked_at) AS checked_at
+                  FROM checks
+                 WHERE target_id = ? AND prober_id != ? AND checked_at >= ?
+                 GROUP BY prober_id
+                 ORDER BY prober_id
+                """,
+                (target_id, self.prober_id, _iso(since)),
+            ).fetchall()
+        )
 
     def history(self, target_id: int, limit: int) -> list[Check]:
         """Recent checks, oldest first, with the time and latency of each.
@@ -871,9 +923,10 @@ class Database:
         rows = self.conn.execute(
             """
             SELECT ok, checked_at, latency_ms FROM checks
-             WHERE target_id = ? ORDER BY checked_at DESC, id DESC LIMIT ?
+             WHERE target_id = ? AND prober_id = ?
+             ORDER BY checked_at DESC, id DESC LIMIT ?
             """,
-            (target_id, limit),
+            (target_id, self.prober_id, limit),
         ).fetchall()
         out: list[Check] = []
         for r in reversed(rows):
@@ -897,9 +950,9 @@ class Database:
             """
             SELECT SUM(checks) AS total, SUM(ok_checks) AS ok
               FROM rollup_hourly
-             WHERE target_id = ? AND hour >= ?
+             WHERE target_id = ? AND prober_id = ? AND hour >= ?
             """,
-            (target_id, since),
+            (target_id, self.prober_id, since),
         ).fetchone()
         total = row["total"] or 0
         if total == 0:
@@ -914,10 +967,14 @@ class Database:
             SELECT substr(hour, 1, 10) AS day,
                    SUM(checks) AS total, SUM(ok_checks) AS ok
               FROM rollup_hourly
-             WHERE target_id = ? AND hour >= ?
+             WHERE target_id = ? AND prober_id = ? AND hour >= ?
              GROUP BY day
             """,
-            (target_id, _iso(_now() - timedelta(days=days))[:10] + "T00:00:00Z"),
+            (
+                target_id,
+                self.prober_id,
+                _iso(_now() - timedelta(days=days))[:10] + "T00:00:00Z",
+            ),
         ).fetchall()
         by_day = {
             r["day"]: (float(r["ok"] or 0) / float(r["total"]) if r["total"] else None)
@@ -1333,6 +1390,37 @@ def _row_to_target(row: sqlite3.Row) -> Target:
         created_at=parse_iso(row["created_at"]),
     )
 
+
+
+def _rollup(
+    conn: sqlite3.Connection,
+    target_id: int,
+    prober_id: str,
+    stamp: str,
+    ok: bool,
+    latency_ms: int | None,
+) -> None:
+    """Fold one check into its hour. Keyed by prober, so vantage points never mix."""
+    hour = stamp[:13] + ":00:00Z"
+    conn.execute(
+        """
+        INSERT INTO rollup_hourly
+            (target_id, prober_id, hour, checks, ok_checks, p50_latency_ms)
+        VALUES (?,?,?,1,?,?)
+        ON CONFLICT (target_id, prober_id, hour) DO UPDATE SET
+            checks = checks + 1,
+            ok_checks = ok_checks + excluded.ok_checks,
+            -- A running approximation, not a true median. Storing every
+            -- latency for 90 days to compute an exact one is not a
+            -- trade worth making for a number displayed to 0 decimals.
+            p50_latency_ms = CASE
+                WHEN excluded.p50_latency_ms IS NULL THEN p50_latency_ms
+                WHEN p50_latency_ms IS NULL THEN excluded.p50_latency_ms
+                ELSE (p50_latency_ms * 3 + excluded.p50_latency_ms) / 4
+            END
+        """,
+        (target_id, prober_id, hour, int(ok), latency_ms),
+    )
 
 
 def _row_to_header(row: sqlite3.Row) -> BlockHeader:

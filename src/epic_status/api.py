@@ -51,6 +51,7 @@ from .render import (
     render_submit,
 )
 from .submit import SubmissionError, Validator, accept
+from .vantage import Ingest, Rejected, parse_keys
 from .web import client_address, cors, json_response, security_headers, stamp
 
 log = logging.getLogger("epic_status.api")
@@ -131,6 +132,9 @@ class Service:
         self.db = Database(settings.db, settings.prober_id)
         self.poller = Poller(self.db, settings)
         self.validator = Validator(self.db, settings)
+        # Parsed here so a malformed key list fails at boot, not on the first push.
+        keys = parse_keys(settings.prober_keys)
+        self.ingest = Ingest(self.db, keys) if keys else None
         # Rotated per process and never persisted. The submitter hashes in the
         # database therefore cannot be reversed even by someone holding the
         # database, and stop being linkable across restarts — the right trade for a
@@ -599,6 +603,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
         )
 
+    if service.ingest is not None:
+        ingest = service.ingest
+
+        @app.post("/api/v1/probes", include_in_schema=False)
+        async def probes_push(request: Request) -> Response:
+            """Signed batches from remote probers. Not in the public schema: it is an
+            operator-to-operator interface, and it only exists when keys are set."""
+            body = await request.body()
+            try:
+                accepted, skipped = ingest.accept(request.headers, body)
+            except Rejected as exc:
+                log.warning("probe batch refused: %s", exc.message)
+                return json_response({"ok": False, "error": exc.message}, exc.status)
+            return json_response({"ok": True, "accepted": accepted, "skipped": skipped})
+
     @app.head("/api/v1/health", include_in_schema=False)
     @app.get(
         "/api/v1/health",
@@ -1008,6 +1027,17 @@ def _serialise_target(status: TargetStatus) -> dict[str, Any]:
             # records are inconsistent about country and some carry none at all.
             "source": "registry",
         },
+        # Other probers' newest checks. Evidence beside `state`, never an input to it.
+        "vantages": [
+            {
+                "prober": v.prober_id,
+                "ok": v.ok,
+                "latency_ms": v.latency_ms,
+                "error": v.error,
+                "checked_at": stamp(v.at),
+            }
+            for v in status.vantages
+        ],
     }
     # Exhaustive on purpose rather than if-node-else: an `else` arm silently
     # serialised every future kind as a relay, with null protocol and cert fields

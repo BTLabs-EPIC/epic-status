@@ -300,6 +300,54 @@ def admin_password(
     typer.echo("")
 
 
+@app.command("prober-key")
+def prober_key(
+    prober_id: Annotated[str, typer.Argument(help="Name of the remote prober, e.g. btlabs-fra.")],
+) -> None:
+    """Generate a shared secret for a remote prober.
+
+    Printed once, for both ends: the hub lists it in EPIC_STATUS_PROBER_KEYS, and the
+    remote passes it to `push` through the environment rather than the command line,
+    for the same shell-history reason as `admin-password`.
+    """
+    from .vantage import new_secret
+
+    secret = new_secret()
+    typer.echo("")
+    typer.echo("On the hub, add to the service environment (comma-separate several):")
+    typer.echo(f"  EPIC_STATUS_PROBER_KEYS={prober_id}:{secret}")
+    typer.echo("")
+    typer.echo("On the remote prober:")
+    typer.echo(f"  EPIC_STATUS_PUSH_SECRET={secret} epic-status push --hub <url> --id {prober_id}")
+    typer.echo("")
+
+
+@app.command("push")
+def push(
+    hub: Annotated[str, typer.Option(help="Base URL of the hub, e.g. https://status.btlabs.uk.")],
+    prober_id: Annotated[str, typer.Option("--id", help="This prober's name on the hub.")],
+    interval: Annotated[float, typer.Option(help="Seconds between rounds.")] = 30.0,
+    once: Annotated[bool, typer.Option(help="One round, then exit.")] = False,
+) -> None:
+    """Run as a remote prober: check the hub's targets and push signed results to it.
+
+    The secret is read from EPIC_STATUS_PUSH_SECRET. Needs no database and no config:
+    the target list comes from the hub's public status.json.
+    """
+    import os
+
+    from .vantage import push_forever
+
+    secret = os.environ.get("EPIC_STATUS_PUSH_SECRET", "")
+    if len(secret) < 32:
+        typer.echo("EPIC_STATUS_PUSH_SECRET is missing or too short.", err=True)
+        raise typer.Exit(2)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    asyncio.run(
+        push_forever(hub=hub, prober_id=prober_id, secret=secret, interval_s=interval, once=once)
+    )
+
+
 def main() -> None:
     app()
 

@@ -47,6 +47,7 @@ from .models import (
     State,
     Target,
     TargetStatus,
+    Vantage,
 )
 from .net import (
     Resolved,
@@ -81,6 +82,10 @@ validated rather than to a freshly resolved one."""
 _UPTIME_TTL_S = 60.0
 """Uptime percentages move slowly; recomputing them 17,000 times a day would be
 the most expensive query in the system for no visible benefit."""
+
+_VANTAGE_WINDOW_S = 300
+"""A remote check older than this is not shown: beside a live verdict, a stale
+observation from elsewhere is worse than none."""
 
 _GEO_PER_SWEEP = 2
 """Enrichment lookups per sweep. On a cold start every target is due at once, and
@@ -818,6 +823,17 @@ class Poller:
         status.history = self.db.history(
             status.target.id, self.settings.history_points
         )
+        since = datetime.now(UTC) - timedelta(seconds=_VANTAGE_WINDOW_S)
+        status.vantages = [
+            Vantage(
+                prober_id=row["prober_id"],
+                ok=bool(row["ok"]),
+                latency_ms=row["latency_ms"],
+                error=row["error"],
+                at=parse_iso(row["checked_at"]) or datetime.now(UTC),
+            )
+            for row in self.db.vantages(status.target.id, since)
+        ]
 
     # ------------------------------------------------------------------- persist
 
