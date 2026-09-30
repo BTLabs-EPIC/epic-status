@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% set page = 'api' %}
+{% block title %}API — {{ site_name }}{% endblock %}
+
+{#
+  Written by hand, in the site's own design, replacing an 863 KB vendored RapiDoc bundle.
+
+  The viewer was not broken — it was generic. It arrived with its own header, its own
+  filter box and its own navigation, so the page read as a different product bolted to
+  the side of this one, and the useful part of any status API — a request you can paste
+  and a response you can recognise — sat below several screens of generated JSON Schema
+  tables. A reader wanting `nodes.json` had to learn a documentation tool first.
+
+  What this does instead: name each route in one line, show a `curl` for it, and show the
+  response this instance is returning *right now* rather than a synthesised example with
+  `"string"` in every field. The full machine-readable document is still published at
+  /api/openapi.json for anything that wants to generate a client.
+#}
+
+{% block content %}
+<div class="page-head">
+  <h1>API</h1>
+</div>
+
+<!-- ------------------------------------------------------------------ routes -->
+<section class="group">
+  <div class="group-head">
+    <h2>Routes</h2>
+    <span class="group-count">{{ endpoints | length }} of them · v1 · no key</span>
+  </div>
+
+  <div class="routes">
+    {% for e in endpoints %}
+    <article class="route" id="{{ e.anchor }}">
+      <div class="route-head">
+        <span class="verb verb-{{ e.method | lower }}">{{ e.method }}</span>
+        <h3><a href="{{ e.path }}"><code>{{ e.path }}</code></a></h3>
+        {% if e.tag %}<span class="route-tag">{{ e.tag }}</span>{% endif %}
+      </div>
+      <p class="route-why">{{ e.why }}</p>
+      {% if e.params %}
+      <dl class="params">
+        {% for p in e.params %}
+        <div>
+          <dt><code>{{ p.name }}</code></dt>
+          <dd>{{ p.what }}</dd>
+        </div>
+        {% endfor %}
+      </dl>
+      {% endif %}
+      <div class="route-code">
+        <figure class="snip">
+          <figcaption>{{ e.caption }}</figcaption>
+          <pre><code>{{ e.example }}</code></pre>
+        </figure>
+        <figure class="snip">
+          <figcaption>Returns</figcaption>
+          <pre><code>{{ e.returns }}</code></pre>
+        </figure>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------------ caching -->
+<section class="group">
+  <div class="group-head">
+    <h2>Caching</h2>
+  </div>
+  <figure class="snip">
+    <figcaption>Send the ETag back; an unchanged snapshot returns 304</figcaption>
+    <pre><code>{{ etag_example }}</code></pre>
+  </figure>
+  <p class="prose prose-tight">
+    <a href="/api/openapi.json">openapi.json</a> &middot;
+    <a href="https://github.com/blacktyg3r/epic-status">source</a>
+  </p>
+</section>
+{% endblock %}

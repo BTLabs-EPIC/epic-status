@@ -1,0 +1,315 @@
+{% macro check_mark() %}
+{#
+  A double check. Inline SVG rather than a glyph: ✓✓ is exactly the kind of codepoint that
+  renders as a fallback box on a minimal font set, which is why every icon on this site is
+  drawn.
+#}
+<svg class="tick" width="14" height="10" viewBox="0 0 14 10" aria-hidden="true"
+     fill="none" stroke="currentColor" stroke-width="1.6"
+     stroke-linecap="round" stroke-linejoin="round">
+  <path d="M1 5.6 3.6 8.2 8.4 1.8" />
+  <path d="M6.2 7.4 7.4 8.6 12.6 1.8" />
+</svg>
+{% endmacro %}
+
+{% extends "base.html" %}
+{% set page = 'admin' %}
+{% block title %}Requests — {{ site_name }}{% endblock %}
+
+{#
+  The review queue. Not linked from the public navigation: a reviewer knows the URL, and a
+  link only tells everyone else the surface exists.
+
+  Every row shows the evidence the validator collected, because the decision is "do I want
+  this host on the board", and that needs more than a hostname. A `verified` row has passed
+  its probes — it resolves to a public address, it answered, and for a node it is on the
+  same chain as the fleet. That is evidence for a decision, not the decision.
+#}
+
+{% block content %}
+{#
+  `data-admin` is the script's root and `data-csrf` is where it reads the token, so the token
+  appears once rather than in a hidden input per control. The forms below are still real form
+  POSTs: with JavaScript off this page works exactly as it did, and with it the script
+  intercepts and saves per field without a reload.
+#}
+<div data-admin data-csrf="{{ csrf }}">
+
+<div class="page-head">
+  <h1>Admin</h1>
+  <p><span class="admin-who">signed in as {{ user }}</span></p>
+</div>
+
+{% if notice %}
+<p class="notice notice-ok">{{ notice }}</p>
+{% endif %}
+
+<dl class="hero-facts admin-counts">
+  <div class="fact">
+    <dt>Waiting</dt>
+    <dd>{{ counts.verified }}</dd>
+    <small>checked, needs a decision</small>
+  </div>
+  <div class="fact">
+    <dt>Checking</dt>
+    <dd>{{ counts.pending }}</dd>
+    <small>probes still running</small>
+  </div>
+  {#
+    The number of hosts actually being published, not the number of submissions ever
+    approved. Those two differ by every seed target, which is most of them — the old value
+    read 0 while eight hosts were on the board.
+  #}
+  <div class="fact">
+    <dt>On the board</dt>
+    <dd>{{ on_board }}</dd>
+    <small>published right now</small>
+  </div>
+  <div class="fact">
+    <dt>Rejected</dt>
+    <dd>{{ counts.rejected }}</dd>
+    <small>declined, kept on record</small>
+  </div>
+</dl>
+
+{% if submissions %}
+<section class="group group-primary">
+  <div class="group-head">
+    <h2>Queue</h2>
+    <span class="group-count">newest first</span>
+  </div>
+
+  <ul class="reqs">
+    {% for r in submissions %}
+    <li class="req req-{{ r['status'] }}" data-submission-id="{{ r['id'] }}">
+      <div class="req-main">
+        <b>{{ r['host'] }}</b>
+        <span class="req-tags">
+          <span class="badge">{{ r['kind'] }}</span>
+          <span class="badge badge-{{ r['status'] }}" data-req-status>{{ r['status'] }}</span>
+        </span>
+        <span class="req-meta">
+          {{ r['operator'] or 'operator not stated' }} ·
+          {{ r['endpoint'] }}
+          {%- if r['country'] %} · submitter says {{ r['country'] | flag }} {{ r['country'] }}{% endif %}
+        </span>
+        <span class="req-meta">
+          {{ r['probes_passed'] }} of {{ r['probes_attempted'] }} checks passed ·
+          submitted {{ r['submitted_at'] }}
+          {%- if r['reviewed_at'] %} · reviewed {{ r['reviewed_at'] }}{% endif %}
+        </span>
+        {% if r['last_error'] %}
+        <span class="req-error">{{ r['last_error'] }}</span>
+        {% endif %}
+      </div>
+
+      {#
+        Buttons only where a decision is still open. A settled row keeps its evidence
+        visible and loses its controls, rather than offering an action that would be
+        refused server-side anyway.
+      #}
+      <div class="req-acts">
+        {% if r['status'] in ('pending', 'verified') %}
+        <form class="req-act" method="post" action="/admin/review">
+          <input type="hidden" name="csrf" value="{{ csrf }}" />
+          <input type="hidden" name="submission_id" value="{{ r['id'] }}" />
+          <button class="btn btn-primary" type="submit" name="decision" value="approve"
+                  data-decide="approve">Approve</button>
+          <button class="btn" type="submit" name="decision" value="reject"
+                  data-decide="reject">Reject</button>
+        </form>
+        {% endif %}
+        {#
+          Delete, which is not the same as reject. Rejecting keeps the record and — through the
+          unique constraint on (kind, host) — stops the same host being resubmitted. Deleting
+          frees it, which is what a typo or a test entry wants and what a genuine refusal does
+          not.
+        #}
+        <form class="req-act" method="post" action="/admin/request/remove">
+          <input type="hidden" name="csrf" value="{{ csrf }}" />
+          <input type="hidden" name="submission_id" value="{{ r['id'] }}" />
+          <button class="btn btn-quiet" type="submit" data-req-remove
+                  title="Delete the record. The host can then be requested again.">Delete</button>
+        </form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% else %}
+<p class="prose">No requests yet.</p>
+{% endif %}
+
+{#
+  Existing records.
+
+  Several fields in the API can only be filled in here: `operator`, `label` and `notes`
+  arrive from the committed registry or a submission form and had no other way to be
+  corrected, and the location fields are worse than absent — RDAP returns a country for this
+  very instance that is wrong by five thousand miles. Corrections are stored as `*_manual`
+  overrides, so the weekly refresh carries them through and clearing a field restores
+  whatever the registry said.
+
+  Identity is not editable. `slug`, `kind` and `endpoint` identify the row that
+  `checks.target_id` points at, and repointing it would attribute one host's measurement
+  history to another.
+#}
+{% macro record(t, csrf) %}
+{#
+  `data-target-id` is what the script patches against; `data-field-name` marks the inputs it
+  watches. The <form> wrapper and its Save button remain for the no-JavaScript path — the
+  script removes the button, because with live saving a Save control would imply the changes
+  are not yet stored.
+#}
+<li class="rec{% if not t.enabled %} rec-off{% endif %}" data-target-id="{{ t.id }}">
+  <form method="post" action="/admin/target">
+    <input type="hidden" name="csrf" value="{{ csrf }}" />
+    <input type="hidden" name="target_id" value="{{ t.id }}" />
+
+    <div class="rec-head">
+      <b>{{ t.display_host }}</b>
+      {#
+        Tags that do something. These read as interactive and were not: clicking one now
+        toggles the thing it names, which is the shortest path to the two changes an operator
+        actually makes. The checkboxes below stay as the explicit control and the two stay in
+        sync, because they are two views of the same booleans.
+      #}
+      <button type="submit" name="toggle" value="verified"
+              class="badge badge-tag{% if t.verified %} badge-accepted{% endif %}"
+              data-tag="verified" aria-pressed="{{ 'true' if t.verified else 'false' }}"
+              title="Official, or community-run">{% if t.verified %}{{ check_mark() }}{% endif %}{{ t.listing }}</button>
+      <button type="submit" name="toggle" value="enabled"
+              class="badge badge-tag{% if not t.enabled %} badge-rejected{% endif %}"
+              data-tag="enabled" aria-pressed="{{ 'true' if t.enabled else 'false' }}"
+              title="Whether the poller checks this host">{{ 'checked' if t.enabled else 'not checked' }}</button>
+      <span class="badge">{{ t.source.value }}</span>
+      <span class="rec-endpoint">{{ t.endpoint }}</span>
+    </div>
+
+    <div class="rec-grid">
+      <label class="field">
+        <span>Operator</span>
+        <input type="text" name="operator" data-field-name="operator"
+               value="{{ t.operator or '' }}" maxlength="64" autocomplete="off" />
+      </label>
+      <label class="field">
+        <span>Label <small>optional</small></span>
+        <input type="text" name="label" data-field-name="label"
+               value="{{ t.label or '' }}" maxlength="64" autocomplete="off" />
+      </label>
+      <label class="field">
+        <span>Country <small>2 letters</small></span>
+        <input type="text" name="country" data-field-name="country"
+               value="{{ t.geo.country_manual or '' }}" maxlength="2"
+               autocapitalize="characters" spellcheck="false" autocomplete="off"
+               placeholder="{{ t.geo.country or '—' }}" />
+      </label>
+      <label class="field">
+        <span>Hosting</span>
+        <input type="text" name="provider" data-field-name="provider"
+               value="{{ t.geo.provider_manual or '' }}" maxlength="64" autocomplete="off"
+               placeholder="{{ t.geo.provider or '—' }}" />
+      </label>
+      <label class="field">
+        <span>City</span>
+        <input type="text" name="city" data-field-name="city"
+               value="{{ t.geo.city_manual or '' }}" maxlength="64" autocomplete="off"
+               placeholder="{{ t.geo.city or '—' }}" />
+      </label>
+      <label class="field rec-notes">
+        <span>Notes <small>not published</small></span>
+        <input type="text" name="notes" data-field-name="notes"
+               value="{{ t.notes or '' }}" maxlength="200" autocomplete="off" />
+      </label>
+    </div>
+
+    {#
+      No checkboxes here. The tags beside the hostname are the control for both flags, and a
+      second copy of the same boolean is a second thing to keep in sync — which is exactly
+      what it looked like on the page.
+    #}
+    <div class="rec-foot">
+      <span class="rec-reg">
+        registry: {{ t.geo.country or '—' }} ·
+        {{ t.geo.provider or '—' }} ·
+        {{ t.geo.network_name or '—' }}
+      </span>
+      <button class="btn" type="submit" data-save-fallback>Save</button>
+    </div>
+  </form>
+
+  {#
+    Removal in two steps, in place. No dialog: a modal here would trap focus and move the
+    page, which is the behaviour this rewrite exists to remove. The confirm state is a data
+    attribute on the row, so the ask and the answer occupy the same space.
+  #}
+  <form class="rec-danger" method="post" action="/admin/remove">
+    <input type="hidden" name="csrf" value="{{ csrf }}" />
+    <input type="hidden" name="target_id" value="{{ t.id }}" />
+    <span class="rec-danger-note">
+      Deletes its measurement history too. Untick Checked instead to just stop probing.
+    </span>
+    <button class="btn btn-danger" type="submit" data-remove>Remove</button>
+    <span class="rec-danger-ask">
+      <b>Remove {{ t.display_host }} and its history?</b>
+      <button class="btn btn-danger" type="submit" data-remove-confirm>Yes, remove</button>
+      <button class="btn" type="button" data-remove-cancel>Cancel</button>
+    </span>
+  </form>
+</li>
+{% endmacro %}
+
+{#
+  Grouped by kind, because one flat list of fifteen editable records is a scroll rather than
+  a tool. Each group is a <details> so the page opens as four headings and you expand the
+  one you came for; the group holding something abnormal is open by default.
+#}
+{% set groups = [
+  ('Public nodes', 'node', targets | selectattr('kind.value', 'equalto', 'node') | list),
+  ('Epicbox relays', 'epicbox', targets | selectattr('kind.value', 'equalto', 'epicbox') | list),
+  ('Mining pools', 'pool', targets | selectattr('kind.value', 'equalto', 'pool') | list),
+] %}
+
+<section class="group group-primary">
+  <div class="group-head">
+    <h2>Monitored targets</h2>
+    <span class="group-count">{{ targets | length }} records</span>
+  </div>
+
+  {% for title, slug, rows in groups %}
+  <details class="recgroup"{% if rows | rejectattr('enabled') | list %} open{% endif %}>
+    <summary>
+      {{ title }}
+      <span class="recgroup-n">
+        {{ rows | length }}
+        {%- set off = rows | rejectattr('enabled') | list | length -%}
+        {%- if off %} · {{ off }} not checked{% endif -%}
+      </span>
+    </summary>
+    {% if rows %}
+    <ul class="recs">
+      {% for t in rows %}{{ record(t, csrf) }}{% endfor %}
+    </ul>
+    {% else %}
+    <p class="prose prose-tight">None.</p>
+    {% endif %}
+  </details>
+  {% endfor %}
+</section>
+
+<form class="admin-out" method="post" action="/admin/logout">
+  <button class="btn" type="submit">Sign out</button>
+</form>
+
+{#
+  One toast, replaced rather than stacked. `aria-live="polite"` so a screen reader hears the
+  outcome without the announcement interrupting anything.
+#}
+<p class="toast" id="toast" role="status" aria-live="polite"></p>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/admin.js?v={{ asset_v }}" defer></script>
+{% endblock %}

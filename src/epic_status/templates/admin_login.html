@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% set page = 'admin' %}
+{% block title %}Sign in — {{ site_name }}{% endblock %}
+
+{#
+  One message for a wrong username and a wrong password, because two messages let anyone
+  enumerate the account name. The form carries no CSRF token: there is no session to
+  protect yet, and a login is not a state change an attacker gains anything by forging.
+#}
+
+{% block content %}
+<div class="page-head">
+  <h1>Sign in</h1>
+</div>
+
+{% if error %}
+<p class="notice notice-bad">{{ error }}</p>
+{% endif %}
+
+<form class="form-grid login" method="post" action="/admin/login">
+  <label class="field">
+    <span>User</span>
+    <input type="text" name="user" autocomplete="username" autocapitalize="off"
+           spellcheck="false" required />
+  </label>
+  <label class="field">
+    <span>Password</span>
+    <input type="password" name="password" autocomplete="current-password" required />
+  </label>
+  <button class="btn btn-primary" type="submit">Sign in</button>
+</form>
+{% endblock %}
