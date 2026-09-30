@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from epic_status.config import Settings, load_seed_targets
+from epic_status.config import Settings, load_seed_targets, pool_adapters
 from epic_status.models import Kind, Source
 from epic_status.probes.epicbox import domain_is_addressable
 
@@ -28,6 +28,7 @@ def test_committed_registry_parses(seeds: list) -> None:
     assert len(seeds) > 0
     assert any(t.kind is Kind.NODE for t in seeds)
     assert any(t.kind is Kind.EPICBOX for t in seeds)
+    assert any(t.kind is Kind.POOL for t in seeds)
 
 
 def test_every_entry_is_a_seed(seeds: list) -> None:
@@ -73,11 +74,21 @@ def test_epicbox_hostnames_are_addressable(seeds: list) -> None:
         assert domain_is_addressable(t.display_host), t.slug
 
 
-def test_our_own_node_is_flagged_as_ours(seeds: list) -> None:
+def test_a_seed_is_flagged_as_verified(seeds: list) -> None:
     """Listing your own infrastructure on a page you control without saying so reads
-    as promotion."""
-    mine = [t for t in seeds if t.ours]
-    assert [t.slug for t in mine] == ["node.btlabs.uk"]
+    as promotion.
+
+    The floonet pair is ours too, and on the same host as the mainnet node, so the same
+    rule applies to it. The assertion is a sorted comparison rather than file order
+    because order here is an artefact of which section of the TOML an entry sits in, not
+    a fact worth pinning.
+    """
+    mine = sorted(t.slug for t in seeds if t.verified)
+    assert mine == [
+        "floo-node.btlabs.uk",
+        "flooepicbox.btlabs.uk",
+        "node.btlabs.uk",
+    ]
 
 
 def test_country_codes_are_uppercase_alpha2(seeds: list) -> None:
@@ -144,6 +155,86 @@ def test_a_malformed_entry_is_a_startup_failure(tmp_path: Path) -> None:
 
     with pytest.raises(KeyError):
         load_seed_targets(path)
+
+
+# -------------------------------------------------------------------------- pools
+
+
+def test_every_pool_names_a_real_adapter(seeds: list) -> None:
+    """A pool's response shape cannot be inferred, so the registry names it. An
+    adapter that does not exist would probe and fail forever, reported as the pool
+    being down rather than as our configuration being wrong."""
+    known = pool_adapters()
+    pools = [t for t in seeds if t.kind is Kind.POOL]
+    assert pools
+    for t in pools:
+        assert t.adapter in known, f"{t.slug} names unknown adapter {t.adapter!r}"
+
+
+def test_only_pools_carry_an_adapter(seeds: list) -> None:
+    for t in seeds:
+        if t.kind is not Kind.POOL:
+            assert t.adapter is None, f"{t.slug} is a {t.kind.value} with an adapter"
+
+
+def test_pool_endpoints_are_https_without_a_trailing_slash(seeds: list) -> None:
+    """The adapter appends a rooted path, so a trailing slash would produce a double
+    slash and a 404 on some frameworks. Plain HTTP would put a stats request on the
+    wire in clear, and these are all public web APIs with certificates."""
+    for t in (t for t in seeds if t.kind is Kind.POOL):
+        assert t.endpoint.startswith("https://"), t.slug
+        assert not t.endpoint.endswith("/"), t.slug
+
+
+def test_a_pool_endpoint_may_differ_from_its_display_host(seeds: list) -> None:
+    """Not a typo when it happens: epicmine's site is epicmine.io and its API is on
+    api.epicmine.io, so these two fields are independent for pools."""
+    pools = {t.slug: t for t in seeds if t.kind is Kind.POOL}
+    assert "epicmine.io" in pools
+    assert urlsplit(pools["epicmine.io"].endpoint).hostname == "api.epicmine.io"
+
+
+def test_an_unknown_adapter_is_a_startup_failure(tmp_path: Path) -> None:
+    """Loud at boot rather than a permanently red row on the board."""
+    bad = tmp_path / "targets.toml"
+    bad.write_text(
+        '[[pool]]\n'
+        'slug = "p.example"\n'
+        'display_host = "p.example"\n'
+        'endpoint = "https://p.example"\n'
+        'adapter = "does-not-exist"\n'
+    )
+    with pytest.raises(ValueError, match="does-not-exist"):
+        load_seed_targets(bad)
+
+
+def test_a_pool_without_an_adapter_is_a_startup_failure(tmp_path: Path) -> None:
+    bad = tmp_path / "targets.toml"
+    bad.write_text(
+        '[[pool]]\n'
+        'slug = "p.example"\n'
+        'display_host = "p.example"\n'
+        'endpoint = "https://p.example"\n'
+    )
+    with pytest.raises(KeyError):
+        load_seed_targets(bad)
+
+
+def test_dead_entries_are_gone_from_the_registry(seeds: list) -> None:
+    """These seven never answered once across thousands of probes. The four node
+    addresses came from a commented-out example in the Epic node's config generator
+    rather than from any seed list, and three relays did not resolve. Four permanent
+    failures beside three permanent successes makes the board's own red mean less."""
+    slugs = {t.slug for t in seeds}
+    assert not slugs & {
+        "95.217.197.180",
+        "5.161.127.56",
+        "5.75.242.4",
+        "5.78.71.29",
+        "epicbox.fastepic.eu",
+        "epicbox.btlabs.tech",
+        "epicbox.51pool.online",
+    }
 
 
 # ----------------------------------------------------------------------- settings

@@ -160,17 +160,20 @@ async def lookup(client: httpx.AsyncClient, address: str) -> GeoInfo | None:
 
 
 def merge(existing: GeoInfo, fresh: GeoInfo) -> GeoInfo:
-    """Fresh registry data wins; a hand-set country is untouchable.
+    """Fresh registry data wins; every hand-set value is untouchable.
 
-    `country_manual` is carried straight through rather than being one input among
-    several, because the registry is wrong often enough to matter and a weekly
-    refresh would otherwise keep putting the wrong flag back.
+    The `*_manual` fields are carried straight through rather than being one input among
+    several, because the registry is wrong often enough to matter and a weekly refresh
+    would otherwise keep putting the wrong answer back. An admin correcting a country, a
+    provider or a city corrects it once.
     """
     return GeoInfo(
         provider=fresh.provider or existing.provider,
+        provider_manual=existing.provider_manual,
         country=fresh.country or existing.country,
         country_manual=existing.country_manual,
         city=fresh.city or existing.city,
+        city_manual=existing.city_manual,
         network_name=fresh.network_name or existing.network_name,
         asn=fresh.asn or existing.asn,
         looked_up_at=fresh.looked_up_at or existing.looked_up_at,

@@ -32,11 +32,13 @@ from .db import Database, parse_iso
 from .geo import lookup as geo_lookup
 from .geo import merge as geo_merge
 from .models import (
+    Chain,
     EpicboxProbe,
     GeoInfo,
     Kind,
     NetworkSummary,
     NodeProbe,
+    PoolProbe,
     Reason,
     Snapshot,
     State,
@@ -53,13 +55,14 @@ from .net import (
 )
 from .probes.epicbox import probe_relay
 from .probes.node import probe_tip, probe_tip_age, probe_version
+from .probes.pool import probe_pool
 from .score import (
     ForkDetector,
     epicbox_state,
     fleet_tip,
     health_score,
-    newest_version,
     node_state,
+    pool_state,
 )
 
 log = logging.getLogger("epic_status.poller")
@@ -87,11 +90,13 @@ class Poller:
     def __init__(self, db: Database, settings: Settings) -> None:
         self.db = db
         self.settings = settings
-        self.snapshot: Snapshot | None = None
+        # One snapshot per chain, and no entry at all for a chain with nothing
+        # configured. A single slot was correct while there was one network; two
+        # networks sharing one would mean whichever chain was summarised last won.
+        self.snapshots: dict[Chain, Snapshot] = {}
         self._sem = asyncio.Semaphore(settings.max_concurrency)
-        self._fork = ForkDetector(
-            confirmations_required=settings.thresholds.down_after_failures
-        )
+        # Stateful per chain — see `_fork_for`.
+        self._fork: dict[Chain, ForkDetector] = {}
 
         self._client: httpx.AsyncClient | None = None
         self._insecure: httpx.AsyncClient | None = None
@@ -108,7 +113,13 @@ class Poller:
         self._cert_days: dict[int, int | None] = {}
         self._last_epicbox: dict[int, tuple[float, EpicboxProbe]] = {}
         self._relay_persisted: dict[int, float] = {}
-        self._tip_age: tuple[float, datetime] | None = None
+        self._next_pool: dict[int, float] = {}
+        self._last_pool: dict[int, tuple[float, PoolProbe]] = {}
+        self._pool_persisted: dict[int, float] = {}
+        # Per chain: "how old is the newest block on *this* network". A single value
+        # was written by whichever chain refreshed last, and published as the age of
+        # the tip on both.
+        self._tip_age: dict[Chain, tuple[float, datetime]] = {}
         self._next_prune = 0.0
         self._background: set[asyncio.Task[None]] = set()
 
@@ -159,11 +170,23 @@ class Poller:
         which delayed every healthy row's update behind hosts that were never going
         to answer. They write into state that the next sweep reads, so being a tick
         behind costs nothing: none of them changes on a five-second timescale.
+
+        **Probe once, judge per chain.** Reaching a host is chain-agnostic and the
+        concurrency limit is shared, so all probes go out in the same gather — one
+        sweep, one bounded wall-clock cost, whether there is one chain or three.
+        Everything downstream of the probes is then partitioned, because every
+        fleet-wide comparison is only meaningful within a chain: mainnet's tip is
+        3.7 million and floonet's is in the hundreds, so a single `fleet_tip` over
+        the union would mark every floonet node millions of blocks behind and take
+        the whole board red. Fork detection has the same defect in reverse — two
+        chains legitimately report different hashes at the same height, which is the
+        literal definition of a fork to a detector that cannot see the difference.
         """
         now = asyncio.get_running_loop().time()
         targets = self.db.targets()
         nodes = [t for t in targets if t.kind is Kind.NODE]
         relays = [t for t in targets if t.kind is Kind.EPICBOX]
+        pools = [t for t in targets if t.kind is Kind.POOL]
 
         node_probes = dict(await asyncio.gather(*(self._probe_node(t) for t in nodes)))
 
@@ -172,35 +195,102 @@ class Poller:
         relay_probes = dict(
             await asyncio.gather(*(self._probe_relay_if_due(t, now) for t in relays))
         )
+        # Same cache-and-gate as relays: one of these APIs takes nearly three
+        # seconds, which must not be paid on every five-second sweep.
+        pool_probes = dict(
+            await asyncio.gather(*(self._probe_pool_if_due(t, now) for t in pools))
+        )
 
-        tip = fleet_tip(node_probes)
-        forked, fork_detail = self._fork.observe(node_probes)
-
+        # Enrichment is per target and chain-blind, so it is spawned once for the
+        # whole fleet — except tip age, which is "how old is *this chain's* newest
+        # block" and is therefore spawned per chain below.
         self._spawn(self._refresh_versions(nodes, node_probes, now))
-        self._spawn(self._refresh_tip_age(nodes, node_probes, tip, now))
         self._spawn(self._refresh_p2p(nodes, node_probes, now))
         self._spawn(self._refresh_certs(relays, now))
         self._spawn(self._refresh_geo(targets, now))
 
-        node_statuses = [self._node_status(t, node_probes[t.slug], tip) for t in nodes]
-        relay_statuses = [self._relay_status(t, relay_probes[t.slug]) for t in relays]
+        all_statuses: list[TargetStatus] = []
+        snapshots: dict[Chain, Snapshot] = {}
 
-        self._persist(node_statuses, node_probes)
-        self._persist_relays(relay_statuses, relay_probes)
-        self._reap(node_statuses + relay_statuses)
+        for chain in Chain:
+            chain_nodes = [t for t in nodes if t.chain is chain]
+            chain_relays = [t for t in relays if t.chain is chain]
+            chain_pools = [t for t in pools if t.chain is chain]
+            if not (chain_nodes or chain_relays or chain_pools):
+                # A chain with nothing configured gets no snapshot rather than an
+                # empty one. `snapshot_for` then reports "no data yet" for it, which
+                # is the honest answer and the same one it gives before the first
+                # sweep — as opposed to a page claiming a healthy network of zero
+                # hosts.
+                continue
 
-        for status in node_statuses + relay_statuses:
+            tip = fleet_tip({t.slug: node_probes[t.slug] for t in chain_nodes})
+            forked, fork_detail = self._fork_for(chain).observe(
+                {t.slug: node_probes[t.slug] for t in chain_nodes}
+            )
+            self._spawn(self._refresh_tip_age(chain_nodes, node_probes, tip, now))
+
+            node_statuses = [
+                self._node_status(t, node_probes[t.slug], tip) for t in chain_nodes
+            ]
+            relay_statuses = [
+                self._relay_status(t, relay_probes[t.slug]) for t in chain_relays
+            ]
+            pool_statuses = [
+                self._pool_status(t, pool_probes[t.slug]) for t in chain_pools
+            ]
+
+            snapshots[chain] = self._build_snapshot(
+                node_statuses,
+                relay_statuses,
+                pool_statuses,
+                tip,
+                forked,
+                fork_detail,
+                chain=chain,
+            )
+            all_statuses.extend(node_statuses + relay_statuses + pool_statuses)
+
+        # Persistence, reaping and history are per target and must see every row
+        # exactly once, so they run over the union rather than inside the loop.
+        self._persist(
+            [s for s in all_statuses if s.target.kind is Kind.NODE], node_probes
+        )
+        self._persist_relays(
+            [s for s in all_statuses if s.target.kind is Kind.EPICBOX], relay_probes
+        )
+        self._persist_pools(
+            [s for s in all_statuses if s.target.kind is Kind.POOL], pool_probes
+        )
+        self._reap(all_statuses)
+
+        for status in all_statuses:
             self._attach_history(status)
 
-        self.snapshot = self._build_snapshot(
-            node_statuses, relay_statuses, tip, forked, fork_detail
-        )
+        self.snapshots = snapshots
 
         if now >= self._next_prune:
             removed = self.db.prune(self.settings.keep_success_days)
             if removed:
                 log.info("pruned %d old successful checks", removed)
             self._next_prune = now + 3600.0
+
+    def _fork_for(self, chain: Chain) -> ForkDetector:
+        """One detector per chain, created on demand.
+
+        The detector is stateful by design — it counts how many consecutive sweeps a
+        conflict has survived before calling it a fork — so the instances cannot be
+        shared. A single one fed both chains would see mainnet's hash at height 390
+        against floonet's hash at height 390 and confirm a fork on the third sweep,
+        every time.
+        """
+        detector = self._fork.get(chain)
+        if detector is None:
+            detector = ForkDetector(
+                confirmations_required=self.settings.thresholds.down_after_failures
+            )
+            self._fork[chain] = detector
+        return detector
 
     def _spawn(self, coro: Coroutine[object, object, None]) -> None:
         """Fire a background refresh, at most one of each kind at a time.
@@ -280,6 +370,42 @@ class Poller:
         self._last_epicbox[target.id] = (asyncio.get_running_loop().time(), probe)
         return probe
 
+    async def _probe_pool_if_due(
+        self, target: Target, now: float
+    ) -> tuple[str, PoolProbe]:
+        """Pool result for this sweep, from cache unless the cadence is up.
+
+        Identical shape to the relay path and for the same reason: awaited once on
+        cold start, refreshed in the background afterwards, so a slow third-party
+        stats endpoint never delays a node row.
+        """
+        assert target.id is not None
+        cached = self._last_pool.get(target.id)
+        if cached is None:
+            self._next_pool[target.id] = now + self.settings.cadence.pool_s
+            return target.slug, await self._one_pool(target)
+        if now >= self._next_pool.get(target.id, 0.0):
+            self._next_pool[target.id] = now + self.settings.cadence.pool_s
+            self._spawn(self._refresh_one_pool(target))
+        return target.slug, cached[1]
+
+    async def _refresh_one_pool(self, target: Target) -> None:
+        await self._one_pool(target)
+
+    async def _one_pool(self, target: Target) -> PoolProbe:
+        assert target.id is not None
+        assert self._client is not None
+        async with self._sem:
+            resolved = await self._resolve(target.endpoint)
+            if isinstance(resolved, TargetRejected):
+                probe = PoolProbe(
+                    ok=False, reason=resolved.reason, error=resolved.message
+                )
+            else:
+                probe = await probe_pool(self._client, resolved, target.adapter)
+        self._last_pool[target.id] = (asyncio.get_running_loop().time(), probe)
+        return probe
+
     async def _refresh_versions(
         self, nodes: list[Target], probes: dict[str, NodeProbe], now: float
     ) -> None:
@@ -318,9 +444,17 @@ class Poller:
         "The chain is moving" is a property of the chain, not of a node, so asking
         every node would be N requests for one fact. The node chosen is the fastest
         one that agrees with the fleet tip.
+
+        `nodes` is one chain's nodes and the cached answer is keyed by that chain:
+        the age of floonet's newest block says nothing about mainnet's, and a single
+        shared value was simply whichever chain refreshed most recently.
         """
         assert self._client is not None
-        if tip is None or (self._tip_age and now < self._tip_age[0]):
+        if not nodes:
+            return
+        chain = nodes[0].chain
+        cached = self._tip_age.get(chain)
+        if tip is None or (cached and now < cached[0]):
             return
         candidates = sorted(
             (
@@ -339,7 +473,10 @@ class Poller:
             async with self._sem:
                 result = await probe_tip_age(self._client, resolved, tip)
             if result.ok and result.timestamp is not None:
-                self._tip_age = (now + self.settings.cadence.node_header_s, result.timestamp)
+                self._tip_age[chain] = (
+                    now + self.settings.cadence.node_header_s,
+                    result.timestamp,
+                )
                 return
 
     async def _refresh_p2p(
@@ -500,7 +637,6 @@ class Poller:
         state, reason, detail = epicbox_state(
             probe,
             consecutive_failures=failures,
-            cert_days=cert_days,
             thresholds=self.settings.thresholds,
         )
 
@@ -512,6 +648,45 @@ class Poller:
             latency_ms=probe.latency_ms,
             protocol_version=probe.protocol_version or row["protocol_version"],
             cert_expires_in_days=cert_days,
+            last_checked_at=datetime.now(UTC),
+            last_ok_at=datetime.now(UTC) if probe.ok else parse_iso(row["last_ok_at"]),
+            last_error=None if probe.ok else (probe.error or row["last_error"]),
+            consecutive_failures=0 if probe.ok else failures,
+        )
+        self._attach_uptime(status)
+        return status
+
+    def _pool_status(self, target: Target, probe: PoolProbe) -> TargetStatus:
+        assert target.id is not None
+        row = self.db.conn.execute(
+            """
+            SELECT last_ok_at, last_error, consecutive_failures
+              FROM targets WHERE id = ?
+            """,
+            (target.id,),
+        ).fetchone()
+        failures = int(row["consecutive_failures"]) + (0 if probe.ok else 1)
+
+        state, reason, detail = pool_state(
+            probe,
+            consecutive_failures=failures,
+            thresholds=self.settings.thresholds,
+        )
+
+        status = TargetStatus(
+            target=target,
+            state=state,
+            reason=reason,
+            detail=detail,
+            latency_ms=probe.latency_ms,
+            # No height or tip_lag. A pool's block height is the last block it won,
+            # not its chain tip, so putting it in the same field as a node's would
+            # make the board's "vs tip" column a lie for these rows.
+            miners=probe.miners,
+            workers=probe.workers,
+            fee_percent=probe.fee_percent,
+            last_block_height=probe.last_block_height,
+            last_block_at=probe.last_block_at,
             last_checked_at=datetime.now(UTC),
             last_ok_at=datetime.now(UTC) if probe.ok else parse_iso(row["last_ok_at"]),
             last_error=None if probe.ok else (probe.error or row["last_error"]),
@@ -590,6 +765,33 @@ class Poller:
                 error=probe.error,
             )
 
+    def _persist_pools(
+        self, statuses: list[TargetStatus], probes: dict[str, PoolProbe]
+    ) -> None:
+        """One row per actual pool probe, not per sweep — see _persist_relays."""
+        for status in statuses:
+            target_id = status.target.id
+            assert target_id is not None
+            stamped = self._last_pool.get(target_id)
+            if stamped is None:
+                continue
+            if self._pool_persisted.get(target_id) == stamped[0]:
+                continue
+            self._pool_persisted[target_id] = stamped[0]
+            probe = probes[status.target.slug]
+            self.db.record_check(
+                target_id=target_id,
+                ok=probe.ok,
+                state=status.state.value,
+                reason=status.reason.value,
+                latency_ms=probe.latency_ms,
+                # Left null on purpose: checks.height means chain height for every
+                # other kind, and a pool's is a different quantity.
+                height=None,
+                tip_hash=None,
+                error=probe.error,
+            )
+
     def _reap(self, statuses: list[TargetStatus]) -> None:
         """Self-removal, so the list stays honest without a moderator.
 
@@ -620,28 +822,36 @@ class Poller:
         self,
         nodes: list[TargetStatus],
         relays: list[TargetStatus],
+        pools: list[TargetStatus],
         tip: int | None,
         forked: bool,
         fork_detail: str | None,
+        *,
+        chain: Chain,
     ) -> Snapshot:
-        newest = newest_version(nodes)
+        """One chain's view. Every list handed in is already filtered to `chain`, and
+        every aggregate below — the counts, the medians, the health score, the
+        provider and country spread — describes that chain alone."""
+        released = self.settings.released_node_version or None
         tip_hash = next(
             (s.tip_hash for s in nodes if s.height == tip and s.tip_hash), None
         )
 
         tip_age_s: int | None = None
-        if self._tip_age is not None:
-            tip_age_s = max(
-                0, int((datetime.now(UTC) - self._tip_age[1]).total_seconds())
-            )
+        tip_mined_at: datetime | None = None
+        cached_age = self._tip_age.get(chain)
+        if cached_age is not None:
+            tip_mined_at = cached_age[1]
+            tip_age_s = max(0, int((datetime.now(UTC) - tip_mined_at).total_seconds()))
 
         providers: dict[str, int] = {}
         countries: list[str] = []
         addresses: dict[str, int] = {}
-        for status in nodes + relays:
+        for status in nodes + relays + pools:
             geo = status.target.geo
-            if geo.provider:
-                providers[geo.provider] = providers.get(geo.provider, 0) + 1
+            shown_provider = geo.display_provider
+            if shown_provider:
+                providers[shown_provider] = providers.get(shown_provider, 0) + 1
             shown = geo.display_country
             if shown and shown not in countries:
                 countries.append(shown)
@@ -651,9 +861,11 @@ class Poller:
                 addresses[addr] = addresses.get(addr, 0) + 1
 
         summary = NetworkSummary(
+            chain=chain,
             tip_height=tip,
             tip_hash=tip_hash,
             tip_age_s=tip_age_s,
+            tip_mined_at=tip_mined_at,
             forked=forked,
             fork_detail=fork_detail,
             nodes_total=len(nodes),
@@ -664,22 +876,28 @@ class Poller:
             epicbox_healthy=sum(1 for s in relays if s.state is State.HEALTHY),
             epicbox_degraded=sum(1 for s in relays if s.state is State.DEGRADED),
             epicbox_down=sum(1 for s in relays if s.state is State.DOWN),
+            pools_total=len(pools),
+            pools_healthy=sum(1 for s in pools if s.state is State.HEALTHY),
+            pools_degraded=sum(1 for s in pools if s.state is State.DEGRADED),
+            pools_down=sum(1 for s in pools if s.state is State.DOWN),
             median_node_latency_ms=_median_latency(nodes),
             median_epicbox_latency_ms=_median_latency(relays),
+            median_pool_latency_ms=_median_latency(pools),
             countries=sorted(countries),
             providers=dict(sorted(providers.items(), key=lambda kv: -kv[1])),
             co_hosted=sum(1 for count in addresses.values() if count > 1),
+            released_node_version=released,
+            nodes_versioned=sum(1 for s in nodes if s.node_version),
+            nodes_current=sum(
+                1 for s in nodes if s.node_version and s.node_version == released
+            ),
         )
         summary.health_score = health_score(
-            nodes, forked=forked, thresholds=self.settings.thresholds
+            nodes,
+            forked=forked,
+            thresholds=self.settings.thresholds,
+            released_version=released,
         )
-
-        # Newest version is attached after scoring so the board can mark laggards
-        # without the score having to be recomputed.
-        for status in nodes:
-            if newest and status.node_version and status.node_version != newest:
-                if status.state is State.HEALTHY and status.detail is None:
-                    status.detail = f"running {status.node_version}, newest is {newest}"
 
         return Snapshot(
             generated_at=datetime.now(UTC),
@@ -687,6 +905,7 @@ class Poller:
             network=summary,
             nodes=_sorted(nodes),
             epicbox=_sorted(relays),
+            pools=_sorted(pools),
             stale=False,
         )
 

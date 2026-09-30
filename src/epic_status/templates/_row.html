@@ -1,19 +1,26 @@
 {#
-  One row, used for both groups.
+  One row, three groups, two presentations from a single markup tree.
 
-  Single markup tree for phone and desktop: below 900px each row is a card with its
-  numbers on a second line and each value carrying its own label; above it the same
-  elements are placed into grid areas as a table and the labels are hidden. A
-  separate mobile template would be a second thing to keep correct, and the phone is
-  the case this page is actually read in.
+  **Desktop is an operator console.** Dense, one line per host, every column on a
+  shared track list so nothing drifts, latency drawn as a comparable bar as well as a
+  number, and sortable headers. A reader comparing eight hosts should not have to read
+  eight numbers to find the slow one.
 
-  Every state carries a word as well as a colour, in the visible text and in the
-  aria-label, because colour alone is not a signal.
+  **Mobile is an instrument.** No cards, no tinted panels, no borders round each host —
+  hairlines and type only. A phone has no room for a container that says nothing.
+
+  One markup tree rather than two templates: a second template is a second thing to
+  keep correct, and the phone is the case this page is actually read in.
+
+  Two rules that hold everywhere. Every state carries a word as well as a colour, in
+  the visible text and in the aria-label, because colour alone is not a signal. And
+  healthy is deliberately near-neutral: a page where everything is fine should look
+  calm, so that the one saturated thing on screen is always a fault.
 #}
 
 {% macro row(status, kind, tip) %}
 {% set t = status.target %}
-<li class="row state-{{ status.state.value }}">
+<li class="row state-{{ status.state.value }}" data-slug="{{ t.slug }}">
   <span
     class="row-dot dot dot-{{ status.state.value }}{% if status.state == State.HEALTHY %} is-live{% endif %}"
     role="img"
@@ -21,103 +28,484 @@
     data-slug="{{ t.slug }}"
   ></span>
 
+  {#
+    A verified host is one an operator has checked and stands behind; everything else is
+    community-run, which is an absence of vouching rather than a judgement. The mark is a
+    word, not a colour or an icon — "verified" means nothing as a tint, and this page has
+    already spent its saturated colours on faults.
+  #}
   <span class="row-host">
-    <b>{{ t.display_host }}{% if t.ours %}<span class="badge badge-ours">ours</span>{% endif %}</b>
-    <span>
-      {{ t.operator or t.label or 'operator not stated' }}
-      {%- if t.geo.provider %} · {{ t.geo.provider }}{% endif -%}
-    </span>
+    <b>{{ t.display_host }}{% if t.verified %}<span class="verified-mark" role="img" title="Verified by the Epic Cash dev team" aria-label="Verified by the Epic Cash dev team">{{ icon_check }}</span>{% endif %}</b>
+    <span>{{ t.operator or t.label or 'operator not stated' }}</span>
   </span>
 
   <span class="row-meta">
+    {#
+      Slot count is kind-specific and the CSS grid for each group is declared to
+      match: nodes fill m1-m5, relays and pools fill m1-m4. Three-way rather than
+      if-node-else, because the `else` arm used to catch every kind that was not a
+      node, so a pool rendered a relay's empty protocol and cert columns.
+
+      `data-sort` carries the raw comparable value for each cell. The visible text is
+      formatted for a human — "at tip", "1,204", "—" — and sorting on that string puts
+      "at tip" next to "9 ms" and an em dash first. The number is the thing being
+      compared, so the number is the thing in the attribute.
+    #}
     {% if kind == Kind.NODE %}
-    <span class="m m1" data-field="height" data-slug="{{ t.slug }}">
+    <span class="m m1" data-field="height" data-slug="{{ t.slug }}"
+          data-sort="{{ status.height if status.height is not none else -1 }}">
       <em>height</em>{{ status.height | thousands }}
     </span>
     <span class="m m2{% if status.tip_lag and status.tip_lag > 0 %} lag-warn{% endif %}"
-          data-field="lag" data-slug="{{ t.slug }}">
+          data-field="lag" data-slug="{{ t.slug }}"
+          data-sort="{{ status.tip_lag if status.tip_lag is not none else -1 }}">
       <em>vs tip</em><b>{{ lag_note(status) }}</b>
     </span>
-    {% else %}
-    <span class="m m1" data-field="protocol" data-slug="{{ t.slug }}">
-      <em>protocol</em>{{ status.protocol_version or '—' }}
+    {#
+      Unconditional. A node that does not answer `get_version` renders an em dash, which is
+      a different and honest statement from an empty cell: the foreign API is reachable for
+      `get_tip` but closed for version. `ver-old` marks a version older than the released
+      one without restating what the release is — the table's header says that once.
+    #}
+    <span class="m m3 ver{% if version_behind(status.node_version, released_node_version) %} ver-old{% endif %}"
+          data-field="version" data-slug="{{ t.slug }}"
+          data-sort="{{ status.node_version or '' }}"
+          {% if version_behind(status.node_version, released_node_version) %}
+          title="Running {{ status.node_version }}; {{ released_node_version }} is released"
+          {% endif %}>
+      <em>version</em>{{ status.node_version or '—' }}
     </span>
-    <span class="m m2" data-field="cert" data-slug="{{ t.slug }}">
-      <em>cert</em>{% if status.cert_expires_in_days is not none %}{{ status.cert_expires_in_days }}d{% else %}—{% endif %}
+
+    {% elif kind == Kind.POOL %}
+    <span class="m m1" data-field="miners" data-slug="{{ t.slug }}"
+          data-sort="{{ status.miners if status.miners is not none else -1 }}">
+      <em>miners</em>{{ status.miners | thousands }}
+    </span>
+    {#
+      Deliberately an age, not a height, and deliberately carrying no warning class. A
+      pool's block interval is inversely proportional to its share, so "18m ago" is
+      unremarkable for a small pool and alarming for a large one, and this service does not
+      know which is which.
+
+      The age sits in its own nested span because tick() rewrites the textContent of
+      everything carrying data-age, which would otherwise delete the small-screen <em>
+      label next to it.
+    #}
+    <span class="m m2" data-field="lastblock" data-slug="{{ t.slug }}"
+          data-sort="{{ status.last_block_at | epoch_ms or 0 }}">
+      <em>last block</em><span data-age="{{ status.last_block_at | epoch_ms }}">{% if status.last_block_at %}{{ status.last_block_at | relative }}{% else %}—{% endif %}</span>
+    </span>
+    {# A pool reports no version of its own. The slot stays, so Version is the same column
+       in every table. #}
+    <span class="m m3 m-empty" aria-hidden="true"></span>
+
+    {% else %}
+    {#
+      Certificate expiry, as a marker and never as a state. A relay that completes a
+      handshake is serving wallets, so the row stays green and the dot stays green; a
+      renewal that has not happened yet is a note for the operator, not a warning to the
+      reader choosing a relay. The previous version returned amber from
+      `score.epicbox_state` for the same fact, which painted a working relay as impaired
+      for two weeks and then did nothing on the day it actually broke.
+
+      `cert_note` answers both halves at once — whether to mark and what the mark says —
+      so the glyph cannot appear without its explanation.
+
+      The value is wrapped in <b> like the `vs tip` cell, which is the pattern in this
+      table for a number that can carry a warning colour: the amber lives on the number,
+      not on the cell, so the small-screen <em> label beside it stays neutral.
+    #}
+    {% set cert_why = cert_note(status.cert_expires_in_days) %}
+    <span class="m m1 cert{% if cert_why %} cert-warn{% endif %}"
+          data-field="cert" data-slug="{{ t.slug }}"
+          data-sort="{{ status.cert_expires_in_days if status.cert_expires_in_days is not none else -1 }}">
+      <em>TLS expires</em><span class="cert-line"><b>{% if status.cert_expires_in_days is not none %}{{ status.cert_expires_in_days }}d{% else %}—{% endif %}</b>{#
+        Value and marker share one inline box. Without the wrapper they are two children of
+        `.m`, which is a *column* flex container so the label can sit above the value on a
+        phone — and the glyph landed on its own line under the number instead of beside it.
+
+        The mark is always in the markup and revealed by the class, so a poll that crosses
+        the threshold toggles one class rather than building DOM.
+
+        `tabindex` and `role` are conditional, not just the text: a tooltip that only opens
+        on hover is invisible to a keyboard and to a phone, so the marker has to be
+        focusable when it means something — and must not be a focus stop that announces an
+        unlabelled image on the other 350-odd days of a certificate's life. `display: none`
+        already achieves that, but only for as long as the stylesheet loads.
+      #}<span class="cert-flag"
+          {% if cert_why %}role="img" tabindex="0" title="{{ cert_why }}" aria-label="{{ cert_why }}"{% else %}aria-hidden="true"{% endif %}
+      >{{ icon_warn }}</span></span>
+    </span>
+    <span class="m m2 m-empty" aria-hidden="true"></span>
+    {# A relay's protocol version is its version, so it sits in the shared Version slot
+       rather than in a column of its own. #}
+    <span class="m m3 ver{% if version_behind(status.protocol_version, epicbox_protocol) %} ver-old{% endif %}"
+          data-field="protocol" data-slug="{{ t.slug }}"
+          data-sort="{{ status.protocol_version or '' }}"
+          {% if version_behind(status.protocol_version, epicbox_protocol) %}
+          title="Speaking {{ status.protocol_version }}; {{ epicbox_protocol }} is current"
+          {% endif %}>
+      <em>version</em>{{ status.protocol_version or '—' }}
     </span>
     {% endif %}
 
-    <span class="m m3">
-      <em>where</em>
-      <span title="{{ t.geo.display_country | flag_title }}{% if t.geo.city %} · {{ t.geo.city }}{% endif %}">
-        {{ t.geo.display_country | flag }}
-      </span>
-    </span>
-
-    <span class="m m4" data-field="latency" data-slug="{{ t.slug }}">
-      <em>from {{ prober_id }}</em>{{ status.latency_ms | ms }}
-    </span>
+    {{ where(t) }}
+    {{ latency(status, t) }}
   </span>
 
+  {#
+    24h uptime. The one number that separates "up right now" from "reliable", and the
+    reader choosing which endpoint to point a wallet at wants both.
+  #}
+  <span class="row-up" data-field="up24" data-slug="{{ t.slug }}"
+        data-sort="{{ status.uptime_24h if status.uptime_24h is not none else -1 }}">
+    <em>24h</em>{{ status.uptime_24h | pct }}
+  </span>
+
+  {#
+    Its own column, always emitted. Rendering it only when history exists would let the
+    column collapse on some rows and not others — the class of bug this replaced.
+  #}
+  <span class="row-spark">
+    <em>recent checks</em>
+    {% if status.history %}
+    {#
+      Uniform bars. An earlier version varied the height of successful checks, which looked
+      like a latency graph and encoded nothing at all — pass or fail is the only information
+      in the shape, so that is all the shape says.
+
+      Each bar carries its own time and outcome in a `title`, so pointing at one answers
+      "when was that?" without the strip having to grow a legend. `tabindex="0"` because a
+      bar that reveals information on hover has to reveal it on focus too, or the strip is
+      mouse-only.
+    #}
+    <span class="spark" role="img"
+          aria-label="last {{ status.history | length }} checks, {{ status.history | selectattr('ok') | list | length }} successful">
+      {% for c in status.history %}<i class="{{ 'ok' if c.ok else 'bad' }}" tabindex="0"
+        title="{{ c.at | utc }} · {{ 'ok' if c.ok else 'failed' }}{% if c.latency_ms is not none %} · {{ c.latency_ms | ms }}{% endif %}"></i>{% endfor %}
+    </span>
+    {% else %}
+    <span class="spark-empty">none yet</span>
+    {% endif %}
+  </span>
+
+  {#
+    A healthy row used to print "just now", then "5s ago", then "10s ago", on every row
+    at once, forever. It was the noisiest thing on the page and it said nothing: the age
+    of the last successful check on a healthy host is always about one cadence, so every
+    green row carried the same number and it changed every second.
+
+    Healthy rows now carry one-hour uptime instead: a figure that differs between hosts,
+    catches a host flapping right now, and does not move on a one-second timer. Paired
+    with the 24h column beside it, the two together say whether a host is getting worse.
+
+    30d was the first choice and was wrong for a reason worth recording — on a young
+    database it is arithmetically identical to 24h, so the column rendered the same number
+    twice and read as a bug. 1h cannot collide with 24h that way.
+
+    The age still appears where it means something: on a host that is not answering, how
+    long since it last did is the whole story.
+  #}
   <span class="row-state">
     <b>{{ status.state | state_label }}</b>
     {% if status.state == State.HEALTHY %}
-    <span
-      data-field="seen"
-      data-slug="{{ t.slug }}"
-      data-age="{{ status.last_ok_at | epoch_ms }}"
-    >{{ status.last_ok_at | relative }}</span>
+    <span class="row-sub" data-field="sub" data-slug="{{ t.slug }}">
+      1h {{ status.uptime_1h | pct }}
+    </span>
     {% else %}
     <span
-      data-field="seen"
+      class="row-sub row-sub-age"
+      data-field="sub"
       data-slug="{{ t.slug }}"
       data-age="{{ status.last_ok_at | epoch_ms }}"
+      data-fmt="ago"
       title="{{ status.detail or status.last_error or '' }}"
     >
-      {%- if status.last_ok_at %}last seen {{ status.last_ok_at | relative }}{% else %}never seen{% endif -%}
+      {%- if status.last_ok_at %}last ok {{ status.last_ok_at | age_clock }}{% else %}never seen{% endif -%}
     </span>
     {% endif %}
   </span>
 
-  {% if status.detail or status.last_error or status.history %}
   {#
-    The reason, in full, on its own line. Borrowed from cosmos.directory, which is
-    the only comparable service that publishes per-endpoint error text — it lets an
-    operator diagnose their own server without contacting anyone.
+    The row's expander. A real button rather than a click handler on the <li>: the panel
+    has to be reachable by keyboard, and a list item with role="button" cannot legally
+    contain the focusable sparkline bars it already has. Clicking anywhere on the row is a
+    convenience layer over this control, not a replacement for it.
+
+    Visually hidden until focused. There is no chevron in the resting row: wherever one
+    could sit it landed against the right-aligned state word and read as punctuation.
   #}
+  <button type="button" class="row-toggle" aria-expanded="false" aria-controls="d-{{ t.slug }}">
+    <span class="sr-only">Details for {{ t.display_host }}</span>
+    <svg class="chev" width="11" height="7" viewBox="0 0 11 7" aria-hidden="true" fill="none"
+         stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M1.2 1.6 5.5 5.5 9.8 1.6" />
+    </svg>
+  </button>
+
+  {#
+    The reason, in full, on its own line. Borrowed from cosmos.directory, which is the
+    only comparable service that publishes per-endpoint error text; it lets an operator
+    diagnose their own server without contacting anyone.
+  #}
+  {% if status.detail or status.last_error %}
   <span class="row-why">
-    {% if status.detail or status.last_error %}
     <span class="m">{{ status.detail or status.last_error }}</span>
-    {% endif %}
-    {% if status.history %}
-    <span class="spark" role="img"
-          aria-label="last {{ status.history | length }} checks, {{ status.history | select | list | length }} successful">
-      {#
-        Uniform bars. An earlier version varied the height of successful checks,
-        which looked like a latency graph and encoded nothing at all — the only
-        information here is pass or fail, so that is all the shape says.
-      #}
-      {% for ok in status.history %}<i class="{{ 'ok' if ok else 'bad' }}"></i>{% endfor %}
-    </span>
-    {% endif %}
   </span>
   {% endif %}
+
+  {{ detail(status, kind) }}
 </li>
 {% endmacro %}
 
-{% macro head(kind) %}
-<div class="row-head" aria-hidden="true">
-  <span></span>
-  <span>Host</span>
-  {% if kind == Kind.NODE %}
-  <span>Height</span>
-  <span>vs tip</span>
-  {% else %}
-  <span>Protocol</span>
-  <span>Cert</span>
-  {% endif %}
-  <span>Where</span>
-  <span>Latency</span>
-  <span>State</span>
+
+{#
+  The expanded row.
+
+  A child of the row rather than a sibling list item, which was the first shape and was
+  wrong twice over: interleaving `<li class="detail">` between the rows made every row an
+  even child, so `.row:nth-child(odd)` stopped matching and the table's striping silently
+  vanished, and sorting — which reorders `:scope > .row` — left every panel behind
+  attached to whichever row happened to land in its place.
+
+  As a child it costs nothing while closed: `hidden` is `display: none`, so it is not a
+  grid item, contributes no track and no row gap, and is out of the tab order and the
+  accessibility tree. Open, it takes a third grid row spanning every column.
+
+  Every pair is conditional on its value existing. A panel of eight em dashes is worse
+  than no panel: it takes a reader's attention to establish that there is nothing there.
+  Nothing here repeats what the row already shows — this is the second half of the
+  record, not a larger copy of the first.
+#}
+{% macro detail(status, kind) %}
+{% set t = status.target %}
+{% set url = probe_url(t) %}
+<div class="detail" id="d-{{ t.slug }}" hidden>
+  <div class="detail-in">
+    <dl class="d-facts">
+      {#
+        The endpoint is first and not forced onto its own line: with the tracks capped at
+        15rem it fits beside the rest, and a full-width row for one URL was most of the
+        panel's height.
+      #}
+      <div class="d-url">
+        <dt>endpoint</dt>
+        <dd><code>{{ t.endpoint }}</code></dd>
+      </div>
+
+      {% if t.p2p %}
+      {# Full width on a phone only. `node.epiccash.com:3414` fits one desktop track and
+         does not on half a phone, where it broke after the `:34` — a value nobody can read.
+         Spanning it on the desktop too pushed the facts onto a fourth row for nothing. #}
+      <div class="d-tok">
+        <dt>p2p</dt>
+        <dd><code>{{ t.p2p }}</code></dd>
+      </div>
+      {% endif %}
+
+      {% if kind == Kind.NODE and status.tip_hash %}
+      <div>
+        <dt>tip hash</dt>
+        <dd><code title="{{ status.tip_hash }}">{{ status.tip_hash | short_hash }}</code></dd>
+      </div>
+      {% endif %}
+
+      {% if status.workers is not none %}
+      <div>
+        <dt>workers</dt>
+        <dd>{{ status.workers | thousands }}</dd>
+      </div>
+      {% endif %}
+
+      {% if status.fee_percent is not none %}
+      <div>
+        <dt>fee</dt>
+        <dd>{{ '%.2f' % status.fee_percent }}%</dd>
+      </div>
+      {% endif %}
+
+      {% if status.last_block_height is not none %}
+      <div>
+        <dt>last block</dt>
+        <dd>{{ status.last_block_height | thousands }}</dd>
+      </div>
+      {% endif %}
+
+      {% if t.geo.display_city %}
+      <div>
+        <dt>city</dt>
+        <dd>{{ t.geo.display_city }}</dd>
+      </div>
+      {% endif %}
+
+      {% if t.geo.display_provider %}
+      <div>
+        <dt>network</dt>
+        <dd>{{ t.geo.display_provider }}{% if t.geo.asn %} · {{ t.geo.asn }}{% endif %}</dd>
+      </div>
+      {% endif %}
+
+      {% if status.uptime_30d is not none %}
+      <div>
+        <dt>30d uptime</dt>
+        <dd>{{ status.uptime_30d | pct }}</dd>
+      </div>
+      {% endif %}
+
+      {% if status.consecutive_failures %}
+      <div>
+        <dt>failures in a row</dt>
+        <dd>{{ status.consecutive_failures }}</dd>
+      </div>
+      {% endif %}
+
+      {% if status.last_checked_at %}
+      <div>
+        <dt>last checked</dt>
+        {# Absolute, and deliberately without `data-age`: the tick loop rewrites anything
+           carrying one, and its `ago` format prefixes "last ok", which is a different
+           fact. A timestamp also cannot go stale in a tab left open. #}
+        <dd>{{ status.last_checked_at | utc }}</dd>
+      </div>
+      {% endif %}
+
+      {% if t.created_at %}
+      <div>
+        <dt>listed since</dt>
+        <dd>{{ t.created_at | day }}</dd>
+      </div>
+      {% endif %}
+
+      {% if t.notes %}
+      <div class="d-wide">
+        <dt>note</dt>
+        <dd>{{ t.notes }}</dd>
+      </div>
+      {% endif %}
+    </dl>
+
+    {#
+      The live half. Server-side latency is measured from one place; this is measured from
+      wherever the reader is, which is the number they can act on. The request goes from
+      their browser straight to the host — nothing is proxied through this service, which
+      is why `connect-src` on this page lists these origins and why the result can differ
+      from the row beside it.
+    #}
+    {% if url %}
+    <div class="d-probe" data-probe="{{ url }}" data-kind="{{ kind.value }}">
+      <button type="button" class="d-go">Check connection</button>
+      <output class="d-out"></output>
+      <span class="d-note">direct from your browser</span>
+    </div>
+    {% endif %}
+  </div>
 </div>
+{% endmacro %}
+
+
+{#
+  Where and latency are identical across all three kinds, so they are written once.
+  Inlining them three times is how the flag ended up right-aligned for one kind after a
+  column was added to another.
+#}
+{% macro where(t) %}
+<span class="m m-where">
+  <em>location</em>
+  <span title="{{ t.geo.display_country | flag_title }}{% if t.geo.display_city %} · {{ t.geo.display_city }}{% endif %}">
+    {{ t.geo.display_country | flag }}
+  </span>
+</span>
+{% endmacro %}
+
+{#
+  Latency as a bar as well as a number. The bar is the console half of this design: one
+  slow host in a list of eight is instant as a length and takes eight reads as a figure.
+
+  Width is capped at 100% of the cell at 2000ms rather than scaled to the slowest host
+  in the group — a relative scale would redraw every bar when one host recovered, and a
+  bar that means something different on each render means nothing.
+
+  The width is a class in 5% steps, not an inline style. This service sets its own CSP
+  with `style-src \'self\'` and no `unsafe-inline`, so a `style="width:42%"` attribute is
+  dropped by the browser and every bar renders at zero — silently, with nothing in the
+  logs. Twenty classes is the cost of not weakening the policy for a bar chart.
+#}
+{% macro latency(status, t) %}
+<span class="m m-lat" data-field="latency" data-slug="{{ t.slug }}"
+      data-sort="{{ status.latency_ms if status.latency_ms is not none else -1 }}">
+  <em>latency</em>
+  <span class="lat" title="Round trip from {{ prober_id }}">
+    <span class="lat-n">{{ status.latency_ms | ms }}</span>
+    <span class="lat-bar" aria-hidden="true"><i class="lat-fill lat-{{ status.latency_ms | lat_band }} lat-w{{ status.latency_ms | lat_w }}"></i></span>
+  </span>
+</span>
+{% endmacro %}
+
+
+{#
+  The header is a child of the same <ul> as the rows, not a sibling of it, and that is
+  structural rather than cosmetic. In the table layout the <ul> owns the column track
+  list and every row subgrids onto it, so the header and all rows share one set of
+  columns. As a sibling it could only ever have its own independent grid, which is
+  exactly how the header drifted out of line with the values underneath it.
+
+  `role="presentation"` because a <ul> may only contain <li>: the element has to be a
+  list item to be a valid child and to participate in the grid, and it is a column
+  legend rather than an item in the list.
+
+  Sortable columns are buttons, not click handlers on a span: a header that reorders the
+  table is a control, and a control has to be reachable from the keyboard and has to say
+  what it does. With JavaScript off they are inert buttons inside a presentational row,
+  and the server's own ordering — health, then latency — still holds.
+
+  Span count must equal the column count declared for this kind in app.css; the spans
+  auto-place into columns 1..N in document order.
+#}
+{% macro head(kind) %}
+<li class="row-head" role="presentation">
+  <span></span>
+  {{ th('host', 'Host', 'h-host') }}
+  {% if kind == Kind.NODE %}
+  {{ th('m1', 'Height', 'h-m1') }}
+  {{ th('m2', 'vs tip', 'h-m2') }}
+  {{ th('m3', 'Version', 'h-m3') }}
+  {% elif kind == Kind.POOL %}
+  {{ th('m1', 'Miners', 'h-m1') }}
+  {{ th('m2', 'Last block', 'h-m2') }}
+  {#
+    No Version header for a pool. A pool reports no version of its own, so the label named
+    a column that was empty on every row — which reads as missing data rather than as
+    not-applicable. The *track* stays, unlabelled, so Version is still column 5 in all
+    three tables and every column after it lines up across them.
+  #}
+  <span class="h-m3"></span>
+  {% else %}
+  {{ th('m1', 'TLS expires', 'h-m1') }}
+  <span class="h-m2"></span>
+  {{ th('m3', 'Version', 'h-m3') }}
+  {% endif %}
+  <span class="h-where">Location</span>
+  {{ th('m-lat', 'Latency', 'h-lat') }}
+  {{ th('row-up', '24h', 'h-up') }}
+  <span class="h-spark">Recent checks</span>
+  {#
+    Ten cells for ten tracks. There is no eleventh for the expander: `.row-toggle` is
+    absolutely positioned and only becomes visible on keyboard focus — the whole row is
+    the click target — so it is out of flow and occupies no column. An empty cell here
+    would invent an eleventh implicit track.
+  #}
+  <span class="h-state">State</span>
+</li>
+{% endmacro %}
+
+{#
+  `cls` is not decoration. Header alignment used to be keyed to `nth-child(n)` per kind:
+  three lists of numbers in app.css that had to be edited in lockstep with this macro, and
+  were not. Once Version moved into a shared column the lists still described the old
+  order, so Location, Version, 24h and Recent checks each sat over a value aligned the
+  other way — the header drifting from its own column. A class travels with the cell and
+  cannot fall out of step with it.
+#}
+{% macro th(key, label, cls) %}
+<span class="{{ cls }}"><button type="button" class="sort" data-sort-key="{{ key }}">{{ label }}</button></span>
 {% endmacro %}

@@ -13,7 +13,18 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from epic_status.db import Database
-from epic_status.models import Kind, Source, Target
+from epic_status.models import GeoInfo, Kind, Source, Target
+
+
+def _outcomes(history: list) -> list[bool]:
+    """Just the pass/fail sequence.
+
+    `Database.history` returns `Check` objects — it gained the time and latency of each check
+    when the recent-checks bars became inspectable on hover. These tests are about the order
+    and the outcomes, which is what this keeps them about.
+    """
+    return [c.ok for c in history]
+
 
 
 def _seed(slug: str, *, label: str | None = None, kind: Kind = Kind.NODE) -> Target:
@@ -92,7 +103,7 @@ def test_apply_schema_is_idempotent(db: Database) -> None:
 
     after = db.conn.execute("SELECT name FROM sqlite_master ORDER BY name").fetchall()
     assert [r["name"] for r in after] == [r["name"] for r in before]
-    assert db.history(target_id, 10) == [True]
+    assert _outcomes(db.history(target_id, 10)) == [True]
     assert _id_of(db, "node.btlabs.uk") == target_id
 
 
@@ -124,7 +135,7 @@ def test_reconcile_seeds_updates_in_place_and_keeps_history(db: Database) -> Non
 
     assert _id_of(db, "node.btlabs.uk") == target_id, "row was replaced, not updated"
     assert db.targets()[0].label == "New label"
-    assert db.history(target_id, 10) == [True, False, True]
+    assert _outcomes(db.history(target_id, 10)) == [True, False, True]
     assert (
         db.conn.execute(
             "SELECT last_ok_at FROM targets WHERE id = ?", (target_id,)
@@ -151,7 +162,7 @@ def test_reconcile_seeds_disables_a_removed_seed_rather_than_deleting_it(
     disabled = [t for t in db.targets(enabled_only=False) if t.slug == "goes"][0]
     assert disabled.enabled is False
     assert disabled.id == goes_id
-    assert db.history(goes_id, 10) == [False]
+    assert _outcomes(db.history(goes_id, 10)) == [False]
 
 
 def test_reconcile_seeds_re_enables_a_returning_seed(db: Database) -> None:
@@ -162,6 +173,164 @@ def test_reconcile_seeds_re_enables_a_returning_seed(db: Database) -> None:
 
     assert _id_of(db, "comes-back") == target_id
     assert [t.slug for t in db.targets()] == ["comes-back"]
+
+
+# --------------------------------------------- admin edits vs the committed file
+#
+# config/targets.toml and /admin are two writers for the same columns, and
+# `reconcile_seeds` runs on every boot. The first version of it overwrote all of them
+# unconditionally, so an edit made in the dashboard survived until the next
+# `systemctl restart` and then reverted — with no error anywhere, and with the
+# dashboard still showing the new value until the page was reloaded.
+#
+# These tests are the ones that would have caught it. Each edits a field, then runs
+# the reconcile a boot would run, then asserts the human's value is still there.
+
+
+def _file_seed(slug: str) -> Target:
+    """A seed as the file declares it: operator, notes and country all set."""
+    return Target(
+        kind=Kind.NODE,
+        slug=slug,
+        endpoint=f"https://{slug}:3413",
+        display_host=slug,
+        operator="From The File",
+        label="file label",
+        notes="file note",
+        source=Source.SEED,
+        geo=GeoInfo(country_manual="FI"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "read"),
+    [
+        ("operator", "Renamed By Hand", lambda t: t.operator),
+        ("label", "hand label", lambda t: t.label),
+        ("notes", "hand note", lambda t: t.notes),
+        ("country", "pl", lambda t: t.geo.country_manual),
+    ],
+)
+def test_admin_edit_survives_a_reboot_reconcile(
+    db: Database, field: str, value: str, read: object
+) -> None:
+    db.reconcile_seeds([_file_seed("n")])
+    target_id = _id_of(db, "n")
+
+    assert db.set_target_field(target_id, field, value) is True
+    db.conn.commit()
+
+    db.reconcile_seeds([_file_seed("n")])
+
+    target = [t for t in db.targets(enabled_only=False) if t.slug == "n"][0]
+    expected = value.upper() if field == "country" else value
+    assert read(target) == expected  # type: ignore[operator]
+
+
+def test_admin_deactivation_survives_a_reboot_reconcile(db: Database) -> None:
+    """Clicking a host's tag to deactivate it is a decision about a host that is still
+    listed in the file. Forcing `enabled` back to 1 on boot made the control look
+    broken rather than overridden."""
+    db.reconcile_seeds([_file_seed("n")])
+    target_id = _id_of(db, "n")
+
+    db.set_target_field(target_id, "enabled", "0")
+    db.conn.commit()
+    db.reconcile_seeds([_file_seed("n")])
+
+    assert [t.slug for t in db.targets()] == []
+    assert _id_of(db, "n") == target_id
+
+
+def test_admin_verified_flag_survives_a_reboot_reconcile(db: Database) -> None:
+    db.reconcile_seeds([_file_seed("n")])
+    target_id = _id_of(db, "n")
+
+    db.set_target_field(target_id, "verified", "1")
+    db.conn.commit()
+    db.reconcile_seeds([_file_seed("n")])
+
+    assert [t for t in db.targets() if t.slug == "n"][0].verified is True
+
+
+def test_unpinned_fields_still_follow_the_file(db: Database) -> None:
+    """The pin is per field, not per row. Correcting an endpoint in the file has to
+    still reach a row whose operator was renamed by hand."""
+    db.reconcile_seeds([_file_seed("n")])
+    target_id = _id_of(db, "n")
+    db.set_target_field(target_id, "operator", "Renamed By Hand")
+    db.conn.commit()
+
+    changed = _file_seed("n")
+    changed = changed.model_copy(update={"notes": "file note, edited", "label": "v2"})
+    db.reconcile_seeds([changed])
+
+    target = [t for t in db.targets() if t.slug == "n"][0]
+    assert target.operator == "Renamed By Hand"
+    assert target.notes == "file note, edited"
+    assert target.label == "v2"
+
+
+def test_unpin_hands_a_field_back_to_the_file(db: Database) -> None:
+    db.reconcile_seeds([_file_seed("n")])
+    target_id = _id_of(db, "n")
+    db.set_target_field(target_id, "operator", "Renamed By Hand")
+    db.conn.commit()
+
+    assert "operator" in db.admin_pins(target_id)
+    assert db.unpin_target_field(target_id, "operator") is True
+    assert "operator" not in db.admin_pins(target_id)
+
+    db.reconcile_seeds([_file_seed("n")])
+    assert [t for t in db.targets() if t.slug == "n"][0].operator == "From The File"
+
+
+def test_unpin_rejects_a_field_that_is_not_editable(db: Database) -> None:
+    db.reconcile_seeds([_file_seed("n")])
+    assert db.unpin_target_field(_id_of(db, "n"), "endpoint") is False
+
+
+def test_update_target_fields_pins_every_field_it_writes(db: Database) -> None:
+    """The whole-form path, not the per-field one. It writes five columns the file also
+    writes, so it has to pin all five or the form reverts on the next boot."""
+    db.reconcile_seeds([_file_seed("n")])
+    target_id = _id_of(db, "n")
+
+    db.update_target_fields(
+        target_id,
+        operator="Form Operator",
+        label="form label",
+        notes="form note",
+        verified=True,
+        enabled=False,
+    )
+    db.conn.commit()
+    db.reconcile_seeds([_file_seed("n")])
+
+    target = [t for t in db.targets(enabled_only=False) if t.slug == "n"][0]
+    assert target.operator == "Form Operator"
+    assert target.label == "form label"
+    assert target.notes == "form note"
+    assert target.verified is True
+    assert target.enabled is False
+
+
+def test_geo_overrides_pin_the_country_and_keep_the_looked_up_half(db: Database) -> None:
+    db.reconcile_seeds([_file_seed("n")])
+    target_id = _id_of(db, "n")
+    db.set_geo(target_id, GeoInfo(country="FI", provider="Hetzner", asn="AS24940"))
+
+    db.set_geo_overrides(target_id, country="pl", provider="MyISP", city="Warsaw")
+    db.conn.commit()
+    db.reconcile_seeds([_file_seed("n")])
+
+    geo = [t for t in db.targets() if t.slug == "n"][0].geo
+    assert geo.country_manual == "PL"
+    assert geo.provider_manual == "MyISP"
+    assert geo.city_manual == "Warsaw"
+    # The registry's own answer is evidence of what RDAP said and is not overwritten.
+    assert geo.provider == "Hetzner"
+    assert geo.asn == "AS24940"
 
 
 def test_slug_is_unique_per_kind_not_globally(db: Database) -> None:
@@ -415,7 +584,7 @@ def test_target_round_trips_through_sqlite(db: Database) -> None:
         operator="btlabs",
         label="Relay",
         notes="a note",
-        ours=True,
+        verified=True,
         source=Source.SEED,
         geo=GeoInfo(provider="Hetzner", country="GB", asn="AS24940"),
     )
@@ -423,7 +592,7 @@ def test_target_round_trips_through_sqlite(db: Database) -> None:
 
     stored = db.targets()[0]
     assert stored.kind is Kind.EPICBOX
-    assert stored.ours is True
+    assert stored.verified is True
     assert stored.enabled is True
     assert stored.source is Source.SEED
     assert stored.geo.provider == "Hetzner"

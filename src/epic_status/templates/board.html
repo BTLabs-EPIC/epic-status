@@ -4,154 +4,194 @@
    lag_note. Without it the page renders as a 500 rather than degrading. #}
 {% import "_row.html" as r with context %}
 {% set page = 'board' %}
-{% block title %}{{ headline }} — {{ site_name }}{% endblock %}
+{# No title override: the base title is already "Epic Cash Status — Degraded", which is
+   what a tab wants. The headline sentence belongs on the page, not in 20 characters of
+   truncated tab. #}
 
 {% block content %}
 {#
-  Answer first, then the list. The verdict and the four numbers are all derived from
-  the same probe responses that drive the lights, so the first screen costs no extra
-  request and still tells a reader who gets no further what they came for.
+  The answer, at the size of an answer.
+
+  This block used to be a tinted callout with a bold 16px line in it. The service
+  already computes a judgement — can a reader transact right now — and then stated it
+  more quietly than the block heights underneath. One word carries the state and gets
+  the only saturated colour on a healthy page; everything else here is neutral.
 #}
-<div class="verdict {{ verdict_class }}">
-  <span
-    class="dot dot-{{ 'healthy' if verdict_class == 'verdict-ok' else 'degraded' if verdict_class == 'verdict-warn' else 'down' if verdict_class == 'verdict-bad' else 'unknown' }}{% if verdict_class == 'verdict-ok' %} is-live{% endif %}"
-    aria-hidden="true"
-  ></span>
-  <span class="verdict-text">
-    <strong>{{ headline }}</strong>
-    <span>{{ subline }}</span>
-  </span>
-  {% if generated_at %}
-  <span class="verdict-meta">
-    <span data-field="generated" data-age="{{ generated_at | epoch_ms }}">{{ generated_at | relative }}</span><br />
-    checked every {{ cadence_s }}s
-  </span>
+<section class="hero tone-{{ verdict.tone }}" aria-labelledby="verdict">
+  <h1 class="hero-answer" id="verdict">
+    {{ verdict.lead }}{% if verdict.accent %} <em>{{ verdict.accent }}</em>.{% endif %}
+  </h1>
+  <p class="hero-second">{{ verdict.second }}</p>
+  {% if verdict.detail %}
+  <p class="hero-detail">{{ verdict.detail }}</p>
   {% endif %}
-</div>
 
-{% if network %}
-<dl class="strip">
-  <div>
-    <dt>Chain tip</dt>
-    <dd data-field="tip">{{ network.tip_height | thousands }}</dd>
-    <small>
-      {% if network.tip_age_s is not none %}
-        last block {{ network.tip_age_s }}s ago
-      {% else %}
-        block age unknown
-      {% endif %}
-    </small>
-  </div>
-  <div>
-    <dt>Nodes at the tip</dt>
-    <dd data-field="nodes">{{ network.nodes_healthy }} / {{ network.nodes_total }}</dd>
-    <small>
-      {{ network.nodes_degraded }} degraded, {{ network.nodes_down }} offline
-    </small>
-  </div>
-  <div>
-    <dt>Epicbox reachable</dt>
-    <dd data-field="epicbox">{{ network.epicbox_healthy }} / {{ network.epicbox_total }}</dd>
-    <small>
-      {% if network.median_epicbox_latency_ms is not none %}
-        median {{ network.median_epicbox_latency_ms | ms }}
-      {% else %}
-        no relay answered
-      {% endif %}
-    </small>
-  </div>
-  <div>
-    <dt>Hosting</dt>
-    <dd>
-      {%- if network.providers -%}
-        {{ network.providers.values() | list | first }} / {{ network.nodes_total + network.epicbox_total }}
-      {%- else -%}—{%- endif -%}
-    </dd>
-    <small>
-      {% if network.providers %}
-        {# Concentration, not a flag count. Five of seven on one provider is the
-           finding; which countries they are in is decoration next to it. #}
-        on {{ network.providers.keys() | list | first }}{% if network.co_hosted %}, {{ network.co_hosted }} shared hosts{% endif %}
-      {% else %}
-        provider not yet known
-      {% endif %}
-    </small>
-  </div>
-</dl>
-{% endif %}
+  {% if network %}
+  {#
+    Four facts, not five, and not equal. The chain tip is what the page is about, so it
+    is set larger and first; the three counts are supporting figures at label size.
+    Node version left this strip entirely — it is a fact about the node table and now
+    sits in that table's own header, where it does not compete with the chain height.
+  #}
+  <dl class="hero-facts">
+    <div class="fact fact-lead">
+      {#
+        Lucide `boxes` — three cubes in isometric projection. Two hand-drawn attempts came
+        before it: stroked outlines that read as "ooo" at label size, then filled rectangles that
+        read as blocks but still looked drawn by someone who does not draw icons. Taking a set
+        brings its internal consistency with it, which is the whole reason to take one.
+      #}
+      <dt>
+        {{ icon_boxes }}
+        Chain tip
+      </dt>
+      <dd data-field="tip">{{ network.tip_height | thousands }}</dd>
+      {#
+        An absolute time, not an age. The block header this comes from is fetched once a
+        minute, so "last block 45s ago" was an age that could already be a minute wrong
+        when it was written and grew wronger the longer the tab stayed open. When the
+        block was mined is a fact about the block.
+      #}
+      <small>
+        Block mined at <span data-field="mined">{{ network.tip_mined_at | utc }}</span>
+      </small>
+    </div>
+    <div class="fact">
+      <dt>Nodes</dt>
+      <dd><span data-field="nodes">{{ network.nodes_healthy }}</span><span class="denom">/{{ network.nodes_total }}</span></dd>
+    </div>
+    <div class="fact">
+      <dt>Relays</dt>
+      <dd><span data-field="epicbox">{{ network.epicbox_healthy }}</span><span class="denom">/{{ network.epicbox_total }}</span></dd>
+    </div>
+    {#
+      Omitted, not zeroed, on a chain with no pools — the same condition the group
+      section below uses. "0/0" is a fact about a category that does not apply here, and
+      a summary strip is exactly where a reader scans for trouble: a zero next to two
+      healthy counts reads as something being down.
 
-<section class="group">
+      `data-field="pools"` therefore may not exist in the DOM on floonet, which is
+      already how app.js's `setText` behaves everywhere — it looks the element up and
+      returns quietly when it is absent.
+    #}
+    {% if network.pools_total or chain == Chain.MAINNET %}
+    <div class="fact">
+      <dt>Pools</dt>
+      <dd><span data-field="pools">{{ network.pools_healthy }}</span><span class="denom">/{{ network.pools_total }}</span></dd>
+    </div>
+    {% endif %}
+  </dl>
+  {% endif %}
+
+  {% if generated_at %}
+  {#
+    Freshness, carried by the icon rather than by moving text.
+
+    The number used to tick every second — "0:01", "0:02" — which is motion for its own
+    sake: the reader does not need per-second resolution on when a 5-second poll last
+    landed, and the digits changing under the headline read as a fault. The cadence is now
+    stated once, as a constant, and the dot alone reacts: it pulses briefly when an update
+    lands, and changes colour and wording only when something is actually wrong.
+
+      up to date   green, "Updated every 5 sec"
+      over 60s     amber, "Catching up..."
+      over 5 min   red,   "Last updated: M:SS ago"
+  #}
+  <p class="hero-stamp" data-live="ok">
+    <span class="live-dot" aria-hidden="true"></span>
+    <span class="live-text" data-field="live">Updated every {{ cadence_s }} sec</span>
+    <span class="sr-only" data-field="live-sr" role="status" aria-live="polite"></span>
+  </p>
+  {% endif %}
+</section>
+
+<section class="group group-node group-primary">
   <div class="group-head">
     <h2>Public nodes</h2>
+    {#
+      The released version, and nothing else. It used to add "is current" and a count of
+      how many nodes were running it — both readable from the Version column two lines
+      below, where each row says what it runs and a dotted underline marks the ones behind.
+      A header that recounts the table under it is a second place to keep correct.
+
+      The node cadence is not repeated here either: the verdict at the top of the page
+      already states it once.
+    #}
     <span class="group-count">
-      sorted by health, then latency{% if reader_region %} · you look like {{ reader_region }}{% endif %}
+      {%- if network and network.released_node_version -%}
+      latest: <a class="rel" href="{{ released_node_url }}" rel="noreferrer">{{ network.released_node_version }}</a>
+      {%- endif -%}
     </span>
   </div>
   {% if nodes %}
-  {{ r.head(Kind.NODE) }}
   <ul class="rows">
+    {{ r.head(Kind.NODE) }}
     {% for status in nodes %}{{ r.row(status, Kind.NODE, network.tip_height if network else none) }}{% endfor %}
   </ul>
   {% else %}
-  <p class="prose">No nodes are being monitored yet.</p>
+  <p class="prose">No nodes yet. <a href="/add">Add one</a> and it appears once it answers three checks.</p>
   {% endif %}
 </section>
 
-<section class="group">
+<section class="group group-epicbox">
   <div class="group-head">
     <h2>Epicbox relays</h2>
-    <span class="group-count">checked every {{ epicbox_cadence_s }}s</span>
+    {#
+      Linked to the relay repository, not to a release tag: epic-epicbox-docker publishes no
+      tags, and pointing this at the node's release page would send a reader to the wrong
+      artifact to check a number they were just told was current.
+    #}
+    <span class="group-count">
+      latest: <a class="rel" href="{{ epicbox_url }}" rel="noreferrer">{{ epicbox_protocol }}</a>
+    </span>
   </div>
   {% if relays %}
-  {{ r.head(Kind.EPICBOX) }}
   <ul class="rows">
+    {{ r.head(Kind.EPICBOX) }}
     {% for status in relays %}{{ r.row(status, Kind.EPICBOX, none) }}{% endfor %}
   </ul>
   {% else %}
-  <p class="prose">No relays are being monitored yet.</p>
+  <p class="prose">No relays yet. <a href="/add">Add one</a> and it appears once the handshake succeeds.</p>
   {% endif %}
 </section>
 
-{% if network and network.providers %}
-<section class="group">
+{#
+  Pools are a mainnet-only group, so the whole section is omitted on a chain that has
+  none rather than rendered empty. "No pools yet. Adding one is a code change" is the
+  right sentence on mainnet, where a pool could exist and none has been integrated; on
+  floonet it invites a reader to wait for something that is never coming, since nobody
+  runs a public pool on a test network. An empty section also costs a heading and a
+  paragraph of vertical space that say nothing.
+
+  Keyed on the pool count rather than on the chain name: the rule is "show the group
+  where there is something to show, or where a reader might reasonably expect one", not
+  "special-case floonet". A pool on floonet would appear here without a code change.
+#}
+{% if pools or chain == Chain.MAINNET %}
+<section class="group group-pool">
   <div class="group-head">
-    <h2>Where it all runs</h2>
-    <span class="group-count">registry records, not measurements</span>
+    <h2>Mining pools</h2>
   </div>
-  <div class="card">
-    <p class="prose prose-tight">
-      {% for provider, count in network.providers.items() %}
-      <strong>{{ provider }}</strong> {{ count }}{% if not loop.last %} · {% endif %}
-      {% endfor %}
-      {% if network.countries %}
-      <br />Countries: {% for c in network.countries %}{{ c | flag }} {{ c }}{% if not loop.last %} · {% endif %}{% endfor %}
-      {% endif %}
-    </p>
-    {% if network.providers.values() | list | first > (network.nodes_total + network.epicbox_total) / 2 %}
-    <p class="prose">
-      More than half of everything listed is on one hosting provider. That is a single
-      correlated failure for the network, and it is not something any one operator can
-      fix alone — it is worth knowing before the outage rather than during it.
-    </p>
-    {% endif %}
-    {% if network.co_hosted %}
-    <p class="prose">
-      {{ network.co_hosted }} address{{ 'es' if network.co_hosted != 1 else '' }}
-      serve{{ '' if network.co_hosted != 1 else 's' }} more than one listed service —
-      a node and a relay on the same machine. They are listed separately because they
-      are separate services, but they fail together.
-    </p>
-    {% endif %}
-  </div>
+  {% if pools %}
+  <ul class="rows">
+    {{ r.head(Kind.POOL) }}
+    {% for status in pools %}{{ r.row(status, Kind.POOL, none) }}{% endfor %}
+  </ul>
+  {#
+    Said once under the group rather than per row: without it a reader compares "last
+    block" across two pools and concludes the quieter one is broken.
+  #}
+  <p class="prose prose-tight">A long gap since the last block means a small pool, not a fault.</p>
+  {% else %}
+  <p class="prose">No pools yet. Every pool's stats API is its own shape, so adding one is a code change.</p>
+  {% endif %}
 </section>
 {% endif %}
+
 {% endblock %}
 
-{% block footer_extra %}
-{% if snapshot and snapshot.stale %}
-<p class="notice stale">
-  The checker has not completed a round recently. Everything above is the last state it
-  managed to record, not the current one.
-</p>
-{% endif %}
-{% endblock %}
+{#
+  No stale notice here. It used to repeat, word for word, what the verdict at the top of
+  the page now says at display size — and a warning stated twice reads as a template that
+  lost track of itself.
+#}

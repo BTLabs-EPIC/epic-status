@@ -41,6 +41,11 @@ from .probes.node import probe_tip
 
 log = logging.getLogger("epic_status.submit")
 
+_AWAITING_INTEGRATION = "awaiting manual integration"
+"""Parked state for a pool submission, stored in `last_error` because the schema has
+no field for "accepted but not actionable yet". Not an error, and it is the string
+`epic-status submissions` prints, so it has to read as a status."""
+
 _HOST_RE = re.compile(
     r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
 )
@@ -125,6 +130,21 @@ def normalise(kind: Kind, raw: str) -> tuple[str, str]:
         display = host if port == 443 else f"{host}:{port}"
         return display, endpoint
 
+    if kind is Kind.POOL:
+        if scheme in {"ws", "wss"}:
+            raise SubmissionError(
+                "That is a WebSocket URL. A pool submission wants the pool's website "
+                "or API host."
+            )
+        # The submitted host is the pool as a human knows it. Which URL its stats
+        # actually live behind is not something a form can establish — one of the two
+        # pools listed serves its API from an entirely different hostname — so that
+        # is settled by hand when the adapter is written.
+        port = port or 443
+        endpoint = f"https://{host}" if port == 443 else f"https://{host}:{port}"
+        display = host if port == 443 else f"{host}:{port}"
+        return display, endpoint
+
     if scheme in {"ws", "wss"}:
         raise SubmissionError("That looks like an Epicbox URL. Choose Epicbox above.")
 
@@ -148,6 +168,7 @@ async def accept(
     operator: str | None,
     submitter_address: str,
     salt: str,
+    country: str | None = None,
 ) -> str:
     """Validate and queue a submission. Returns the message to show.
 
@@ -205,14 +226,22 @@ async def accept(
         operator=operator,
         submitter_hash=submitter_hash,
         next_probe_at=datetime.now(UTC),
+        country=country,
     )
     if inserted is None:
         raise SubmissionError(f"{display} has already been submitted and is being checked.")
 
+    if kind is Kind.POOL:
+        # Do not promise probing. A pool is not auto-promoted, and a message saying
+        # it "appears as soon as it passes" would have the submitter watching the
+        # board for something that is never going to happen on its own.
+        return f"{display} received. Pools are added by hand."
+
     return (
-        f"{display} queued. It will be probed {settings.submit_probes_required} times, "
-        f"{int(settings.submit_probe_interval_s)} seconds apart, and appears on the "
-        "board as soon as it passes."
+        f"{display} received. It will be checked "
+        f"{settings.submit_probes_required} times, "
+        f"{int(settings.submit_probe_interval_s)} seconds apart, then reviewed before it "
+        "appears on the board."
     )
 
 
@@ -242,6 +271,29 @@ class Validator:
 
         assert isinstance(row, sqlite3.Row)
         kind = Kind(row["kind"])
+        if kind is Kind.POOL:
+            # Pools are not auto-promoted and are not probed here. There is no pool
+            # protocol: every one exposes a different JSON shape at a different path,
+            # so a submission cannot be validated without someone reading that pool's
+            # API and writing an adapter. Probing it would prove only that a web
+            # server answered, which is not the thing being claimed.
+            #
+            # The row stays `pending` — it *is* the request — but its next probe is
+            # pushed out of reach so the validator stops picking it up every tick.
+            # Without that it would be permanently due and re-queried forever.
+            if row["last_error"] != _AWAITING_INTEGRATION:
+                self.db.update_submission(
+                    int(row["id"]),
+                    probes_passed=int(row["probes_passed"]),
+                    probes_attempted=int(row["probes_attempted"]),
+                    next_probe_at=datetime.now(UTC) + timedelta(days=3650),
+                    status="pending",
+                    last_error=_AWAITING_INTEGRATION,
+                )
+                log.info(
+                    "pool submission %s queued for manual integration", row["host"]
+                )
+            return
         attempted = int(row["probes_attempted"]) + 1
         passed = int(row["probes_passed"])
         required = self.settings.submit_probes_required
@@ -282,7 +334,7 @@ class Validator:
             passed += 1
 
         if passed >= required:
-            self._promote(row, kind)
+            self._verified(row)
             return
 
         # A single failure does not reject: a host can be restarting. But attempts
@@ -303,38 +355,50 @@ class Validator:
         )
 
     def _fleet_tip(self) -> int | None:
+        """Mainnet's tip, from recent checks.
+
+        The join to `targets` is what scopes it. `checks.height` holds heights from
+        every chain in one column, and `MAX()` across all of them is mainnet's 3.7
+        million — which happens to be the right answer today and for the wrong reason.
+        Reverse the sizes once (a test network that outgrows mainnet, or a mainnet
+        outage where only floonet nodes are answering) and an unscoped MAX would reject
+        every genuine mainnet submission as "not mainnet". Submissions are mainnet-only,
+        so the comparison names mainnet.
+        """
         found = self.db.conn.execute(
             """
-            SELECT MAX(height) AS tip FROM checks
-             WHERE ok = 1 AND height IS NOT NULL
-               AND checked_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-5 minutes')
+            SELECT MAX(c.height) AS tip
+              FROM checks c
+              JOIN targets t ON t.id = c.target_id
+             WHERE c.ok = 1 AND c.height IS NOT NULL
+               AND t.chain = 'mainnet'
+               AND c.checked_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-5 minutes')
             """
         ).fetchone()
         return int(found["tip"]) if found and found["tip"] is not None else None
 
-    def _promote(self, row: object, kind: Kind) -> None:
+    def _verified(self, row: object) -> None:
+        """Probes passed. Stop there.
+
+        This used to insert the target and set `accepted`, which meant a stranger's host
+        appeared on a public board with no human in the loop. Everything the probes
+        establish is still established — it resolves to a public address, it answers, and
+        for a node it is on the same chain as the fleet — but that is evidence for a
+        decision, not the decision. `verified` is the waiting state; only
+        `Database.review_submission` moves a row to `accepted`.
+        """
         import sqlite3
 
         assert isinstance(row, sqlite3.Row)
-        self.db.insert_target(
-            Target(
-                kind=kind,
-                slug=row["host"],
-                endpoint=row["endpoint"],
-                display_host=row["host"],
-                operator=row["operator"],
-                source=Source.SUBMITTED,
-            )
-        )
         self.db.update_submission(
             int(row["id"]),
             probes_passed=int(row["probes_passed"]) + 1,
             probes_attempted=int(row["probes_attempted"]) + 1,
             next_probe_at=None,
-            status="accepted",
+            status="verified",
             last_error=None,
         )
-        log.info("accepted submission %s (%s)", row["host"], kind.value)
+        log.info("submission %s verified, awaiting review", row["host"])
 
     def _reject(self, row: object, reason: str) -> None:
         import sqlite3

@@ -28,6 +28,7 @@ from .models import (
     EpicboxProbe,
     Kind,
     NodeProbe,
+    PoolProbe,
     Reason,
     State,
     Target,
@@ -159,17 +160,59 @@ def epicbox_state(
     probe: EpicboxProbe,
     *,
     consecutive_failures: int,
-    cert_days: int | None,
     thresholds: Thresholds,
 ) -> tuple[State, Reason, str | None]:
-    """The verdict for one relay row."""
+    """The verdict for one relay row: did the relay serve a wallet, or not.
+
+    **Certificate expiry is deliberately not a state here, and used to be.** A relay
+    inside the warning window was returned as amber with the detail "certificate
+    expires in 14 days", which was wrong in both directions at once. It painted a
+    relay that had just completed a websocket handshake and sent its challenge frame
+    as impaired, on the strength of something that has not happened yet and that in
+    the overwhelming majority of cases never will — the operator's renewal runs and
+    the row silently goes green again. Meanwhile it bought nothing on the day the
+    certificate actually lapses: an expired certificate fails verification, so the
+    probe fails, and the ordinary confirm-then-fail path below takes the row to red
+    without any help from a cert threshold. Amber was therefore only ever shown while
+    the relay was fine, and never when it broke.
+
+    Expiry is a maintenance fact with a future date attached, which is a different
+    kind of claim from "this endpoint is not serving right now". It is published as a
+    marker on the TLS column with the day count in its tooltip, where a reader who
+    cares can see it and a reader choosing a relay is not warned off a working one.
+    `Thresholds.cert_warn_days` still decides when that marker appears; it is consumed
+    by the view now rather than here.
+    """
     if probe.ok:
-        if cert_days is not None and cert_days <= thresholds.cert_warn_days:
-            return (
-                State.DEGRADED,
-                Reason.CERT_EXPIRING,
-                f"certificate expires in {cert_days} days",
-            )
+        return State.HEALTHY, Reason.OK, None
+
+    if consecutive_failures < thresholds.down_after_failures:
+        return State.DEGRADED, probe.reason, probe.error or "not responding — confirming"
+    return State.DOWN, probe.reason, probe.error
+
+
+def pool_state(
+    probe: PoolProbe,
+    *,
+    consecutive_failures: int,
+    thresholds: Thresholds,
+) -> tuple[State, Reason, str | None]:
+    """The verdict for one pool row: reachable, with a parseable stats payload.
+
+    Deliberately no chain-lag check, and no staleness check on the last block
+    found. The tempting version of this function compares the pool's block height
+    to the fleet tip and degrades the laggard — but the pools' `currentHeight` is
+    the last block they *found*, not their node's tip (see probes.pool), and the
+    expected gap is inversely proportional to the pool's share of the network.
+    Applying it marked a healthy nine-miner pool degraded next to a healthy
+    hundred-miner one, which is a red light for being small.
+
+    Time since the last block has the same defect for the same reason: eighteen
+    minutes is alarming for the largest pool and unremarkable for the smallest, and
+    this service does not know either one's hashrate share. It is published as a
+    fact for a reader to interpret, and no threshold is applied to it.
+    """
+    if probe.ok:
         return State.HEALTHY, Reason.OK, None
 
     if consecutive_failures < thresholds.down_after_failures:
@@ -205,13 +248,20 @@ def health_score(
     *,
     forked: bool,
     thresholds: Thresholds,
+    released_version: str | None = None,
 ) -> int | None:
     """One number, 0-100, for nodes only.
 
-    Epicbox is deliberately excluded. A dead relay breaks one transport for the
-    wallets configured to use it; a forked or stalled chain breaks everything.
-    Averaging two failure domains with different blast radii produces a number
-    that means nothing in either.
+    Epicbox and pools are deliberately excluded. A dead relay breaks one transport
+    for the wallets configured to use it, and a dead pool costs its own miners;
+    a forked or stalled chain breaks everything. Averaging failure domains with
+    different blast radii produces a number that means nothing in any of them.
+
+    `released_version` is what upstream has published. When it is known the version
+    component measures the fleet against *that*; without it the best available
+    comparison is the highest version seen, which scores a uniformly stale fleet as
+    perfect. The fallback is kept because the published version is configuration and
+    can be absent, and a missing constant must not silently zero a component.
     """
     nodes = [s for s in statuses if s.target.kind is Kind.NODE]
     if not nodes:
@@ -243,8 +293,11 @@ def health_score(
 
     versions = [s.node_version for s in nodes if s.node_version]
     if versions:
-        newest = max(versions, key=_version_key)
-        version = sum(1 for v in versions if v == newest) / len(versions)
+        # Against the published release when it is known, so a fleet that is
+        # uniformly one release behind scores as uniformly behind rather than as
+        # unanimous. `max()` is the fallback, not the intent.
+        target = released_version or max(versions, key=_version_key)
+        version = sum(1 for v in versions if v == target) / len(versions)
     else:
         version = 1.0
 
@@ -274,6 +327,18 @@ def _version_key(version: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
-def newest_version(statuses: list[TargetStatus]) -> str | None:
-    versions = [s.node_version for s in statuses if s.node_version]
-    return max(versions, key=_version_key) if versions else None
+def version_behind(reported: str | None, released: str | None) -> bool:
+    """True only when `reported` is strictly older than `released`.
+
+    Equality is not the test, and this is not pedantry: the released Epicbox protocol
+    constant said 3.0.0 while two relays on the network were already answering 3.0.1,
+    so a `!=` comparison drew "out of date" under a relay that was ahead of the
+    published number. Being ahead of a release is a normal state for an operator
+    running a build from master, and flagging it teaches readers to ignore the marker.
+
+    Unparseable segments sort as 0 rather than raising, the same rule the score uses,
+    so a node reporting "4.0.3-rc1" compares as 4.0.3.0 instead of breaking the row.
+    """
+    if not reported or not released:
+        return False
+    return _version_key(reported) < _version_key(released)

@@ -22,6 +22,45 @@ from pydantic import BaseModel, ConfigDict, Field
 class Kind(str, enum.Enum):
     NODE = "node"
     EPICBOX = "epicbox"
+    POOL = "pool"
+    """A mining pool's public stats API. Monitored for reachability and for whether
+    its own node is at the chain tip — a pool mining on a stale tip is the failure
+    that costs miners money, and it looks identical to a healthy pool from outside.
+
+    Unlike the other two kinds there is no protocol here: every pool exposes a
+    different JSON shape, so each one needs a named adapter in `probes.pool` and is
+    integrated by hand rather than auto-promoted from the submission form."""
+
+
+class Chain(str, enum.Enum):
+    """Which Epic Cash network a target belongs to.
+
+    A second chain is not a filter over one fleet, it is a second fleet that happens
+    to be rendered by the same code. Floonet's tip is in the hundreds while mainnet's
+    is in the millions, so every comparison that asks "is this host keeping up?" —
+    `score.fleet_tip`, the lag thresholds, fork detection, the health score — has to
+    be scoped to one chain or it reports the smaller network as catastrophically
+    behind the larger one. That is the whole reason this enum exists rather than a
+    boolean `testnet` flag: the code reads better when the fleet is chosen than when
+    it is excluded.
+
+    Deliberately not called `Network`. `Snapshot.network` already means "the summary
+    of this fleet", and `GeoInfo.network_name` means "the RDAP handle for the IP
+    block". A third meaning of the same word in the same models file would be
+    guaranteed to be misread. `NetworkSummary.chain` has been the name for this
+    concept since the first commit — it was simply hardcoded to `"mainnet"` and never
+    assigned. This fills it in.
+    """
+
+    MAINNET = "mainnet"
+    FLOONET = "floonet"
+    """Epic Cash's test network. Its own genesis, its own difficulty, its own tip."""
+
+    @property
+    def label(self) -> str:
+        """The name as a reader should see it, so the casing lives in one place
+        rather than being re-capitalised in each template that prints it."""
+        return "Mainnet" if self is Chain.MAINNET else "Floonet"
 
 
 class Source(str, enum.Enum):
@@ -68,6 +107,11 @@ class Reason(str, enum.Enum):
     BAD_RESPONSE = "bad_response"
     RATE_LIMITED = "rate_limited"
     CERT_EXPIRING = "cert_expiring"
+    """No longer produced. Kept because `checks.reason` is a TEXT column with months
+    of rows in it, and parsing a stored value back through this enum has to keep
+    working for history that was written while an approaching expiry was still a
+    state. Relay certificate expiry is now a marker on the TLS column, not a verdict —
+    see `score.epicbox_state`."""
     NEVER_SEEN = "never_seen"
 
 
@@ -126,6 +170,31 @@ class EpicboxProbe(BaseModel):
     error: str | None = None
 
 
+class PoolProbe(BaseModel):
+    """Result of one GET against one pool's stats API.
+
+    Deliberately thin. A pool's hashrate is a big, constantly-moving number that
+    says nothing about whether the pool is working, so it is not collected.
+
+    `last_block_height` is the last block the pool FOUND, not its chain tip — the
+    APIs' `currentHeight` is the same number, despite the name. It must not be
+    compared against the fleet tip; see the note in probes.pool.
+
+    `fee_percent` is always a percentage, whatever unit the pool reported it in.
+    """
+
+    ok: bool
+    latency_ms: int | None = None
+    miners: int | None = None
+    workers: int | None = None
+    fee_percent: float | None = None
+    last_block_height: int | None = None
+    last_block_at: datetime | None = None
+    http_status: int | None = None
+    reason: Reason = Reason.OK
+    error: str | None = None
+
+
 class VersionProbe(BaseModel):
     """`get_version`. Slow cadence — it only changes when a node restarts."""
 
@@ -169,7 +238,17 @@ class GeoInfo(BaseModel):
     a lookup. This exists because the registry is wrong often enough to matter: this
     project's own host is a London VPS whose RDAP record says India, because the
     allocation is registered to the provider's NOC."""
+    provider_manual: str | None = None
+    """Set by hand, and never overwritten by a lookup. Same reason as
+    `country_manual`: RDAP returns the registered holder of the allocation, which for a
+    reseller or a NOC-registered block is not the company an operator would name. An
+    admin correcting it once should not have to correct it again next week."""
+
     city: str | None = None
+    city_manual: str | None = None
+    """Set by hand, never overwritten. RDAP carries a city inconsistently and often
+    names the datacentre's registered office rather than where the metal is."""
+
     network_name: str | None = None
     """The registry's own handle for the block, e.g. CLOUD-FSN1, which often
     identifies the datacentre more precisely than the country does."""
@@ -181,12 +260,29 @@ class GeoInfo(BaseModel):
         """What the page shows. A human-supplied value always beats the registry."""
         return self.country_manual or self.country
 
+    @property
+    def display_provider(self) -> str | None:
+        return self.provider_manual or self.provider
+
+    @property
+    def display_city(self) -> str | None:
+        return self.city_manual or self.city
+
 
 class Target(BaseModel):
     """A thing being monitored."""
 
     id: int | None = None
     kind: Kind
+    chain: Chain = Chain.MAINNET
+    """Which network this host serves.
+
+    Defaulted rather than required, and that is a deliberate compatibility choice in
+    three places at once: every existing `Target(...)` construction site keeps
+    working, the DDL default fills the column for every row already in the database
+    when the table is rebuilt, and a seed entry in the committed registry that says
+    nothing about a chain means mainnet — which is what every entry written before
+    floonet existed meant."""
     slug: str
     """Stable public identifier, used in URLs and as the API's `id`."""
     endpoint: str
@@ -196,17 +292,49 @@ class Target(BaseModel):
     """What a human reads. Not necessarily parseable back into the endpoint."""
     p2p: str | None = None
     """host:port for the TCP liveness fallback used when the HTTP API is closed."""
+    adapter: str | None = None
+    """Pool-only. Names the response shape to expect, resolved against the registry
+    in `probes.pool`. Nodes and relays speak one protocol each and need no adapter;
+    every pool's stats API is its own invention, so the shape is declared per target
+    in the committed registry rather than sniffed at runtime."""
     operator: str | None = None
     label: str | None = None
     notes: str | None = None
-    ours: bool = False
-    """Operated by whoever runs this instance. Shown as a badge, because listing
-    your own infrastructure on a page you control without saying so reads as
-    promotion."""
+    verified: bool = False
+    """Vouched for by whoever runs this instance: an official server rather than a
+    community one.
+
+    This replaced a flag called `ours`, which meant "operated by the instance operator" and
+    read on a public page as *your* node — the one thing it did not mean. The new flag says
+    something a reader can act on: somebody has checked this host and stands behind it.
+    Unset means community-run, which is not a judgement, just an absence of vouching.
+
+    The SQL column is still named `ours`. Renaming it would mean rebuilding the table and
+    dropping the values already in it, and the column name is not published anywhere —
+    the API field, the admin control and the board badge all say `verified`."""
+
+    @property
+    def listing(self) -> str:
+        """`official` or `community`, for the API and for grouping on the board."""
+        return "official" if self.verified else "community"
     source: Source = Source.SUBMITTED
     enabled: bool = True
     geo: GeoInfo = Field(default_factory=GeoInfo)
     created_at: datetime | None = None
+
+
+class Check(BaseModel):
+    """One probe result, for the recent-checks strip.
+
+    The strip used to be a list of bare booleans, which is all it needs to *draw* — but a bar
+    a reader can point at should be able to say when it was and what happened, and a boolean
+    cannot. `latency_ms` comes along because it is the one number that explains a slow-looking
+    success.
+    """
+
+    ok: bool
+    at: datetime
+    latency_ms: int | None = None
 
 
 class TargetStatus(BaseModel):
@@ -226,6 +354,15 @@ class TargetStatus(BaseModel):
     protocol_version: str | None = None
     cert_expires_in_days: int | None = None
 
+    # Pool-only. On one flat model with the other kinds' fields for the same reason
+    # they are: the board renders one row shape and the alternative is a union type
+    # that every consumer has to narrow before reading a latency.
+    miners: int | None = None
+    workers: int | None = None
+    fee_percent: float | None = None
+    last_block_height: int | None = None
+    last_block_at: datetime | None = None
+
     last_checked_at: datetime | None = None
     last_ok_at: datetime | None = None
     last_error: str | None = None
@@ -234,18 +371,36 @@ class TargetStatus(BaseModel):
     uptime_1h: float | None = None
     uptime_24h: float | None = None
     uptime_30d: float | None = None
-    history: list[bool] = Field(default_factory=list)
-    """Most recent checks, oldest first. Rendered as the sparkline."""
+    history: list[Check] = Field(default_factory=list)
+    """Most recent checks, oldest first. Rendered as the recent-checks strip."""
 
 
 class NetworkSummary(BaseModel):
     """The headline. One sentence's worth of derived facts, so the first screen
-    answers "can I transact right now" rather than posing it."""
+    answers "can I transact right now" rather than posing it.
 
-    chain: str = "mainnet"
+    Every field here describes exactly one chain. There is one of these per
+    `Snapshot`, and one `Snapshot` per chain — the alternative, a single summary with
+    the two fleets added together, would produce numbers that are true of neither:
+    "4 of 5 nodes healthy" across two networks tells a floonet reader nothing and
+    misleads a mainnet one.
+    """
+
+    chain: Chain = Chain.MAINNET
+    """Which network these numbers describe. Typed rather than a bare string, and
+    now actually assigned by the poller — it was a hardcoded `"mainnet"` literal for
+    as long as there was only one chain to summarise."""
     tip_height: int | None = None
     tip_hash: str | None = None
     tip_age_s: int | None = None
+    tip_mined_at: datetime | None = None
+    """When the tip block was mined, from the block's own timestamp.
+
+    The absolute value, as well as the age. `tip_age_s` is computed once per snapshot from
+    a header fetched every 60 seconds, so a page that renders it as "45s ago" and then
+    leaves it there is showing an age that was already up to a minute stale when it was
+    written and only gets staler. A UTC timestamp cannot go stale — it is a fact about a
+    block, not about when someone looked."""
     health_score: int | None = None
     forked: bool = False
     fork_detail: str | None = None
@@ -258,9 +413,14 @@ class NetworkSummary(BaseModel):
     epicbox_healthy: int = 0
     epicbox_degraded: int = 0
     epicbox_down: int = 0
+    pools_total: int = 0
+    pools_healthy: int = 0
+    pools_degraded: int = 0
+    pools_down: int = 0
 
     median_node_latency_ms: int | None = None
     median_epicbox_latency_ms: int | None = None
+    median_pool_latency_ms: int | None = None
 
     countries: list[str] = Field(default_factory=list)
     providers: dict[str, int] = Field(default_factory=dict)
@@ -268,6 +428,20 @@ class NetworkSummary(BaseModel):
     """Distinct addresses serving more than one listed role. Currently three, all
     of them a node and a relay on one machine — a fact the page should state
     rather than obscure by listing the rows separately."""
+
+    released_node_version: str | None = None
+    """What upstream has published, from `releases.py`. Stated once for the fleet
+    rather than repeated as a complaint on every lagging row."""
+
+    nodes_current: int = 0
+    """Nodes reporting exactly `released_node_version`. Counted only over nodes that
+    reported a version at all, so an unreachable node is absent from the numerator
+    and from `nodes_versioned` rather than being scored as stale."""
+
+    nodes_versioned: int = 0
+    """Nodes that reported any version. The denominator for `nodes_current`; a node
+    whose foreign API is closed answers `get_tip` but not `get_version`, so this is
+    routinely smaller than `nodes_total`."""
 
 
 class Snapshot(BaseModel):
@@ -279,6 +453,7 @@ class Snapshot(BaseModel):
     network: NetworkSummary
     nodes: list[TargetStatus] = Field(default_factory=list)
     epicbox: list[TargetStatus] = Field(default_factory=list)
+    pools: list[TargetStatus] = Field(default_factory=list)
     stale: bool = False
     """True when the poller has not completed a sweep recently. Frozen numbers
     presented as live are worse than an admission."""

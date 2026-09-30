@@ -1,4 +1,4 @@
-# Seed targets — Epic Cash mainnet.
+# Seed targets — Epic Cash.
 #
 # This file is the canonical list, kept in git so that adding or removing a
 # community server is a reviewable change. Public submissions land in SQLite
@@ -17,6 +17,11 @@
 # wild: the node's own listener exposed directly on 3413, or the listener kept on
 # loopback with nginx terminating TLS on 443. The second is the better deployment
 # and a host:port model cannot express it.
+#
+# `chain` is optional and defaults to "mainnet", so an entry that says nothing
+# about a network means what every entry in this file meant before floonet was
+# added. The two chains are judged entirely separately — see models.Chain — and
+# a floonet host at height 400 is never compared against mainnet's tip.
 
 # ---------------------------------------------------------------------- nodes
 
@@ -55,54 +60,36 @@ operator = "btlabs"
 ours = true
 country = "GB"
 
-# The four addresses below are the mainnet `seeds = [...]` list shipped in the
-# Epic developer documentation. On probing, all four time out on both 3413 (API)
-# and 3414 (P2P), while the same hosts accept connections on 22 and 80 — so the
-# machines are alive and reachable and the Epic ports specifically are not open.
-# Egress from the probing host is not the explanation: two other Hetzner
-# addresses and both Vultr nodes answered on the same run.
+# Four addresses were listed here as "documented seeds" and have been removed.
+# They were never seeds. They come from a commented-out example inside the node's
+# own config generator (config/src/comments.rs:272 in EpicCash/epic), which shows
+# an operator how to write a manual `seeds = [...]` list if they switch seeding
+# from DNS to List. Nothing reads it, nobody maintains it, and all four failed
+# every probe from the day this page started — 663 consecutive failures, zero
+# successes.
 #
-# They are listed anyway, and this is the main argument for the whole project: a
-# newcomer who copies the seed list out of the official docs today gets four
-# addresses that do not respond. Either the docs are stale or those operators
-# have firewalled the ports, and until something measures it continuously nobody
-# finds out.
+# Real mainnet bootstrap does not use a list at all: Seeding::default() is
+# DNSSeed, which resolves the single hostname in MAINNET_DNS_SEEDS
+# (servers/src/epic/seed.rs:38) — node.epiccash.com, listed above. That name
+# currently has one A record, on the same host that serves the default Epicbox
+# relay. Worth knowing; not something this file can fix.
+#
+# Their history is preserved: reconcile_seeds disables a removed seed rather than
+# deleting it, so the rows stay in `checks`.
 
 [[node]]
-slug = "95.217.197.180"
-display_host = "95.217.197.180:3413"
-endpoint = "https://95.217.197.180:3413"
-p2p = "95.217.197.180:3414"
-label = "Documented seed"
-country = "FI"
-notes = "From the documented mainnet seed list. Also the address of epicbox.51pool.online"
-
-[[node]]
-slug = "5.161.127.56"
-display_host = "5.161.127.56:3413"
-endpoint = "https://5.161.127.56:3413"
-p2p = "5.161.127.56:3414"
-label = "Documented seed"
-country = "US"
-notes = "From the documented mainnet seed list. Hetzner Ashburn"
-
-[[node]]
-slug = "5.75.242.4"
-display_host = "5.75.242.4:3413"
-endpoint = "https://5.75.242.4:3413"
-p2p = "5.75.242.4:3414"
-label = "Documented seed"
-country = "DE"
-notes = "From the documented mainnet seed list. Hetzner Falkenstein"
-
-[[node]]
-slug = "5.78.71.29"
-display_host = "5.78.71.29:3413"
-endpoint = "https://5.78.71.29:3413"
-p2p = "5.78.71.29:3414"
-label = "Documented seed"
-country = "US"
-notes = "From the documented mainnet seed list. Hetzner Hillsboro"
+slug = "floo-node.btlabs.uk"
+display_host = "floo-node.btlabs.uk"
+chain = "floonet"
+# Same deployment shape as node.btlabs.uk: the node's API on loopback, nginx on
+# 443. Answered get_tip in 44 ms at height 390 running 4.0.4 — a young chain, and
+# the reason chains are scored separately. Judged against floonet's own tip, so
+# being three and a half million blocks below mainnet is not a fault.
+endpoint = "https://floo-node.btlabs.uk"
+operator = "btlabs"
+ours = true
+country = "GB"
+notes = "Floonet node. Serves the floonet explorer and wallet"
 
 # ------------------------------------------------------------------- epicbox
 #
@@ -141,31 +128,69 @@ country = "FI"
 # Fastest of the three that answered, ~590 ms. Hetzner Finland.
 notes = "Used by Stack Wallet mobile"
 
-# The two below appear in the relay software's own hardcoded server list, which
-# means wallets are configured to use them, but neither resolves: fastepic.eu
-# returns no address for the name and btlabs.tech does not resolve at all. A
-# wallet pointed at either cannot send. Listed so the page says so out loud.
-
 [[epicbox]]
-slug = "epicbox.fastepic.eu"
-display_host = "epicbox.fastepic.eu"
-endpoint = "wss://epicbox.fastepic.eu:443/"
-operator = "fastEpic"
-notes = "In the relay's built-in server list; DNS did not resolve when last probed"
+slug = "flooepicbox.btlabs.uk"
+display_host = "flooepicbox.btlabs.uk"
+chain = "floonet"
+endpoint = "wss://flooepicbox.btlabs.uk:443/"
+operator = "btlabs"
+ours = true
+country = "GB"
+# Challenge frame in 50 ms, protocol 3.0.0.
+#
+# The name has no hyphen on purpose, and the alternatives are worth recording
+# because both are already configured on this host and both are wrong here:
+# `floo-epicbox.btlabs.uk` is refused by this service's own submit validator,
+# since Epicbox addresses admit only letters, digits and dots — a wallet cannot
+# parse an address on a hyphenated relay even though the socket answers perfectly.
+# `epicbox.btlabs.uk` resolves and serves TLS but refuses the websocket upgrade
+# with HTTP 400, so it is a certificate SAN rather than a relay endpoint.
+notes = "Floonet relay"
 
-[[epicbox]]
-slug = "epicbox.btlabs.tech"
-display_host = "epicbox.btlabs.tech"
-endpoint = "wss://epicbox.btlabs.tech:443/"
-notes = "In the relay's built-in server list; DNS did not resolve when last probed"
+# Three relays were listed here and have been removed: epicbox.fastepic.eu and
+# epicbox.btlabs.tech, neither of which resolves, and epicbox.51pool.online,
+# which resolves but times out during the handshake. None ever completed one.
+# They appear in the relay software's hardcoded server list, so wallets may still
+# be pointed at them — but a row that has never once been green reports nothing
+# except that this file is out of date, and four permanent failures next to three
+# permanent successes makes the board's own red mean less.
+#
+# History is kept; removing a seed disables the row rather than deleting it.
 
-[[epicbox]]
-slug = "epicbox.51pool.online"
-display_host = "epicbox.51pool.online"
-endpoint = "wss://epicbox.51pool.online:443/"
-operator = "51pool"
-country = "FI"
-# Resolves to 95.217.197.180 — the same address as a documented mainnet seed —
-# and times out during the WebSocket handshake. One machine, two roles, neither
-# answering.
-notes = "Shares an address with the 95.217.197.180 seed entry"
+# ---------------------------------------------------------------------- pools
+#
+# Pools have no protocol. Each one exposes a hand-rolled JSON stats endpoint, so
+# each needs a named `adapter` implemented in src/epic_status/probes/pool.py, and
+# adding one is a code change rather than a config change. That is the intended
+# friction: the alternative is guessing at a third party's response shape and
+# silently reporting nonsense when it changes.
+#
+# `endpoint` is the base of the API, which is not always the public host —
+# epicmine serves its site on epicmine.io and its API on api.epicmine.io. The
+# adapter supplies the path.
+#
+# Only reachability, chain height, miner and worker counts, the fee and the last
+# block found are collected. Not hashrate: it is a large fast-moving number that
+# says nothing about whether a pool is working, and on a status board it would be
+# read as a ranking.
+
+[[pool]]
+slug = "epicmine.io"
+display_host = "epicmine.io"
+endpoint = "https://api.epicmine.io"
+adapter = "epicmine"
+operator = "EpicMine"
+# Stats answered in ~2.8 s, which is why pools are polled at 30 s and not 5 s.
+# Regional stratum hosts in Germany, the United States and Singapore; the API
+# itself is one origin, so the latency below describes that origin only.
+notes = "Stratum in DE, US and SG. Fee 2.5%"
+
+[[pool]]
+slug = "epic.iniaku.my.id"
+display_host = "epic.iniaku.my.id"
+endpoint = "https://epic.iniaku.my.id"
+adapter = "iniaku"
+operator = "IniAku"
+# Answered in ~450 ms. Reports its fee as the string "0.02" rather than a
+# percentage, which the adapter converts — see fee_is_fraction in probes/pool.py.
+notes = "Fee 2%"

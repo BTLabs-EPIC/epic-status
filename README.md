@@ -1,6 +1,7 @@
 # epic-status
 
-Health and uptime monitoring for Epic Cash mainnet public nodes and Epicbox relays.
+Health and uptime monitoring for Epic Cash mainnet public nodes, Epicbox relays and
+mining pools.
 One process: an asyncio poller, SQLite, and a server-rendered board. No build step,
 no framework on the client, no external services.
 
@@ -63,6 +64,7 @@ Probe one target without starting anything:
 ```sh
 uv run epic-status check node.epiccash.com:3413
 uv run epic-status check epicbox.epiccash.com --kind epicbox
+uv run epic-status check epicmine.io --kind pool
 uv run epic-status check node.example.org --json
 ```
 
@@ -84,6 +86,7 @@ present.
 | `SITE_URL` | `http://127.0.0.1:13431` | Only used to print the `curl` example. |
 | `PROBER_ID` | `local` | Stamped on every stored check. |
 | `PROBER_REGION` | `unknown` | Shown in the footer. |
+| `RELEASED_NODE_VERSION` | from `releases.py` | What upstream published. Not the highest version seen. |
 | `SUBMISSIONS_ENABLED` | `true` | `false` removes the form and the endpoint. |
 | `ALLOW_PRIVATE_TARGETS` | `false` | Development only. Read [Security](#security) first. |
 | `KEEP_SUCCESS_DAYS` | `7` | Failures are never pruned. |
@@ -116,7 +119,24 @@ slug = "epicbox.example.org"
 display_host = "epicbox.example.org"
 endpoint = "wss://epicbox.example.org:443/"
 operator = "Example Pool"
+
+[[pool]]
+slug = "pool.example.org"
+display_host = "pool.example.org"       # the pool as a miner knows it
+endpoint = "https://api.pool.example.org"   # base of its API, often a different host
+adapter = "examplepool"                 # must exist in probes/pool.py — see below
+operator = "Example Pool"
 ```
+
+**A pool needs an `adapter`, and adding one is a code change.** Nodes and relays each
+speak a single protocol, so one probe covers every host of that kind. Pools do not:
+each exposes a hand-rolled JSON endpoint at its own path, with its own envelope, and
+its own units — one of the two listed here reports a 2% fee as the string `"0.02"`
+while the other reports 2.5% as the number `2.5`. Each shape is therefore a named
+entry in `ADAPTERS` in `src/epic_status/probes/pool.py`, and the registry names which
+one to use. An adapter that does not exist is a startup failure rather than a
+permanently red row. Submitting a pool through the form records a request for manual
+integration; it is not probed and not auto-promoted.
 
 `endpoint` is a **URL, not host:port**, because both deployment shapes exist in the
 wild: the node's own listener exposed directly on 3413, or the listener kept on
@@ -151,14 +171,36 @@ fork on every orphan would cause the panic it exists to detect.
 
 **The score, 0–100, covers nodes only.** Reachability 40% (degraded counts as a
 half), tip agreement 35%, latency 15% on a curve that flattens past a second, version
-spread 10%, and a flat −25 if forked. Epicbox is excluded on purpose: a dead relay
-breaks one transport for the wallets configured to use it, a forked chain breaks
-everything, and averaging two failure domains with different blast radii produces a
-number that means nothing in either.
+spread 10%, and a flat −25 if forked. Epicbox and pools are excluded on purpose: a
+dead relay breaks one transport for the wallets configured to use it and a dead pool
+costs its own miners, while a forked chain breaks everything. Averaging failure
+domains with different blast radii produces a number that means nothing in any of
+them.
+
+**A pool's block height is not compared to the chain tip, and this is deliberate.**
+The pool APIs' `currentHeight` is not their node's tip — it is identical to
+`lastFound`, the last block the pool won. Since a pool finds blocks in proportion to
+its share of the network, the gap measures pool size, not health: an early version of
+this code compared the two and marked a perfectly healthy nine-miner pool as lagging
+next to a hundred-miner one. No threshold is applied to the age of the last block for
+the same reason. Green on a pool row means its API answered with valid stats.
 
 Version spread is in there because it is a security metric on a MimbleWimble chain,
 not trivia — after Litecoin's 2026 MWEB peg-out exploit roughly 70% of nodes were
 still unpatched weeks later.
+
+**Version spread is measured against the published release, not against the fleet.**
+An earlier version compared each node to the highest version *seen*, which scores a
+fleet that is uniformly one release behind as unanimous — the metric goes quiet
+exactly when it matters. The released version is a committed constant in
+`releases.py`, mirrored by hand from the developer documentation's `versions.js`, and
+overridable with `RELEASED_NODE_VERSION`. Fetching it from the GitHub API at runtime
+would make a page whose whole claim is "no external services" depend on one. A stale
+constant degrades honestly: the board reports 0 of N on the new release until it is
+bumped, which is what it would say on release day anyway. Only a version *strictly
+older* than the release is marked — a relay answering a protocol newer than the
+published number is ahead of it, not behind, and a marker that fires on a healthy
+state teaches readers to ignore it.
 
 ## Locations
 
@@ -180,8 +222,14 @@ do not render at all in Chrome on Windows and fall back to boxes on minimal font
 sets. A known country with no drawing gets a two-letter chip; an unknown country gets
 the word `unknown`, occupying the same slot so the column never looks broken.
 
-Provider concentration is shown on the board because it is the more useful fact. At
-the time of writing, every public Epic node and relay is on two companies.
+**Provider concentration is on the history page, not the board.** It is a real and
+alarming fact — at the time of writing every public Epic node and relay is on two
+companies — but it is a property of the fleet rather than an answer to "can I transact
+right now", and an earlier version put both the vendor name on every row and a
+provider card in the summary strip. That spent the most valuable space on the page on
+the fact fewest readers arrived for. It now has a section of its own under
+`/history`, where someone is already reading about the fleet, and the summary slot it
+vacated states the released node version once instead.
 
 ## API
 
@@ -194,8 +242,9 @@ open to cross-origin POSTs.
 | `GET /api/v1/status.json` | Everything. Carries an `ETag`; send `If-None-Match` and a poller costs nothing when nothing changed. |
 | `GET /api/v1/nodes.json?healthy=true` | Bare endpoint list, for a wallet or a failover config. |
 | `GET /api/v1/epicbox.json?healthy=true` | Same, for relays. |
+| `GET /api/v1/pools.json?healthy=true` | Same, for mining pools. |
 | `GET /api/v1/health` | Liveness of **this service**, not of the network. 503 when the snapshot is stale. |
-| `POST /api/v1/submit` | `kind`, `host`, `operator`. |
+| `POST /api/v1/submit` | `kind` (`node`, `epicbox` or `pool`), `host`, `operator`. |
 | `GET /api/docs` | OpenAPI. |
 
 Per-target fields follow [grin.fail](https://grin.fail/nodes.json)'s shape where they
@@ -279,6 +328,14 @@ directly. If you must bind publicly, set `SUBMISSIONS_ENABLED=false`.
 The application sets its own CSP, `referrer-policy: no-referrer` and
 `x-content-type-options`, so a self-hoster behind any proxy gets them. Templates are
 autoescaped: hostnames and operator names come from the public form.
+
+`connect-src` is `'self'` on every route except the board, where it also names the
+origins of the hosts currently listed. That is what allows the expanded row's **Query
+from here** button to measure a node from the reader's own browser instead of from the
+prober. It is opt-in per host and per press — nothing is contacted on page load — and the
+list shrinks by itself when a target is removed. A host whose API sends no
+`access-control-allow-origin` is reported as unreachable from the browser, which is what
+it is.
 
 ## Self-hosting behind nginx
 
@@ -397,7 +454,9 @@ src/epic_status/
   db.py          SQLite; checks and rollups are the irreplaceable state
   net.py         address validation, pinned-IP connections, cert expiry
   probes/        node.py (get_tip, get_version, get_header) · epicbox.py (Challenge)
+                 pool.py (per-pool stats adapters)
   geo.py         RDAP provider and location
+  releases.py    the published node/wallet/protocol versions, a committed constant
   score.py       three states, fork detection, the 0–100 score
   poller.py      the sweep loop and the in-memory snapshot
   submit.py      submission validation and promotion

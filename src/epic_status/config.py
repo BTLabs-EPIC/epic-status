@@ -19,7 +19,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .models import GeoInfo, Kind, Source, Target
+from . import releases
+from .models import Chain, GeoInfo, Kind, Source, Target
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -41,6 +42,11 @@ class Cadence(BaseModel):
     node_p2p_s: float = 30.0
     epicbox_s: float = 30.0
     epicbox_cert_s: float = 21600.0
+    pool_s: float = 30.0
+    """Pools are third-party web apps, not protocol daemons: a stats endpoint is
+    usually a database aggregate behind a framework, and one of the two measured
+    here takes over two seconds to answer. Five-second polling of that is rude and
+    buys nothing, since miner counts and fees do not move on that timescale."""
     geo_refresh_s: float = 604800.0
 
 
@@ -90,6 +96,11 @@ class Settings(BaseSettings):
 
     prober_region: str = "unknown"
 
+    released_node_version: str = releases.NODE
+    """What upstream has published, which is not the same fact as the highest
+    version the fleet happens to be running — see `releases.py`. Env-overridable so
+    an operator tracking a different line does not have to patch the source."""
+
     own_node_url: str | None = None
     """A node this instance operates. The board may time one request to it from
     the reader's browser automatically, because the reader already connected to
@@ -101,6 +112,18 @@ class Settings(BaseSettings):
     max_concurrency: int = 16
     """Bounded because probing N third-party hosts is bursty work sharing a
     process with page serving on a 2-vCPU box."""
+
+    admin_user: str = "admin"
+    admin_password_hash: str = ""
+    """scrypt hash from `epic-status admin-password`. **Empty disables the review
+    dashboard entirely** — the routes are never registered and /admin is a 404, rather
+    than a login form advertising a surface with no credential behind it. There is no
+    default password: a default on a self-hosted service is a published one."""
+
+    admin_cookie_secure: bool = True
+    """Send the session cookie with `Secure`, so it never travels over plain HTTP. Set
+    false only to reach /admin over http on a development machine; on anything reachable
+    it must stay true."""
 
     submissions_enabled: bool = True
     max_pending_submissions: int = 200
@@ -127,10 +150,32 @@ def settings() -> Settings:
 # --------------------------------------------------------------------------- seeds
 
 
+def _chain(raw: dict[str, object]) -> Chain:
+    """Read the optional `chain` key, defaulting to mainnet.
+
+    Absent means mainnet, which is what every entry written before floonet existed
+    meant — so the whole registry did not have to be annotated to add a second
+    network. An unknown value is a startup failure rather than a silent fallback:
+    `chain = "floonnet"` quietly monitoring mainnet is worse than not booting, since
+    the row would look correct on a page that is describing the wrong network.
+    """
+    value = raw.get("chain")
+    if value is None:
+        return Chain.MAINNET
+    try:
+        return Chain(str(value).lower())
+    except ValueError:
+        raise ValueError(
+            f"target {raw.get('display_host')!r} names chain {value!r};"
+            f" known chains are {[c.value for c in Chain]}"
+        ) from None
+
+
 def _node_target(raw: dict[str, object]) -> Target:
     host = str(raw["display_host"])
     return Target(
         kind=Kind.NODE,
+        chain=_chain(raw),
         slug=str(raw.get("slug") or host),
         endpoint=str(raw["endpoint"]).rstrip("/"),
         display_host=host,
@@ -138,7 +183,7 @@ def _node_target(raw: dict[str, object]) -> Target:
         operator=str(raw["operator"]) if raw.get("operator") else None,
         label=str(raw["label"]) if raw.get("label") else None,
         notes=str(raw["notes"]) if raw.get("notes") else None,
-        ours=bool(raw.get("ours", False)),
+        verified=bool(raw.get("verified", raw.get("ours", False))),
         source=Source.SEED,
         geo=GeoInfo(
             country_manual=str(raw["country"]).upper() if raw.get("country") else None
@@ -150,13 +195,58 @@ def _epicbox_target(raw: dict[str, object]) -> Target:
     host = str(raw["display_host"])
     return Target(
         kind=Kind.EPICBOX,
+        chain=_chain(raw),
         slug=str(raw.get("slug") or host),
         endpoint=str(raw["endpoint"]),
         display_host=host,
         operator=str(raw["operator"]) if raw.get("operator") else None,
         label=str(raw["label"]) if raw.get("label") else None,
         notes=str(raw["notes"]) if raw.get("notes") else None,
-        ours=bool(raw.get("ours", False)),
+        verified=bool(raw.get("verified", raw.get("ours", False))),
+        source=Source.SEED,
+        geo=GeoInfo(
+            country_manual=str(raw["country"]).upper() if raw.get("country") else None
+        ),
+    )
+
+
+def pool_adapters() -> frozenset[str]:
+    """Names of the pool response-shape adapters that exist.
+
+    Imported lazily. Config is the bottom layer and a probe module sits above it,
+    so importing one at module scope inverts the dependency and risks a cycle the
+    moment a probe wants a setting. The set is only needed while validating the
+    registry, which happens once at boot.
+    """
+    from .probes.pool import ADAPTERS
+
+    return frozenset(ADAPTERS)
+
+
+def _pool_target(raw: dict[str, object]) -> Target:
+    """A pool's endpoint is the base of its *API*, which is not always its public
+    host: epicmine serves its site on epicmine.io and its API on api.epicmine.io.
+    So display_host and endpoint are independent here rather than derived, and the
+    adapter names which response shape to expect.
+    """
+    host = str(raw["display_host"])
+    adapter = str(raw["adapter"])
+    if adapter not in pool_adapters():
+        raise ValueError(
+            f"pool {host!r} names adapter {adapter!r}, which is not in probes.pool."
+            f" Known: {sorted(pool_adapters())}"
+        )
+    return Target(
+        kind=Kind.POOL,
+        chain=_chain(raw),
+        slug=str(raw.get("slug") or host),
+        endpoint=str(raw["endpoint"]).rstrip("/"),
+        display_host=host,
+        adapter=adapter,
+        operator=str(raw["operator"]) if raw.get("operator") else None,
+        label=str(raw["label"]) if raw.get("label") else None,
+        notes=str(raw["notes"]) if raw.get("notes") else None,
+        verified=bool(raw.get("verified", raw.get("ours", False))),
         source=Source.SEED,
         geo=GeoInfo(
             country_manual=str(raw["country"]).upper() if raw.get("country") else None
@@ -177,6 +267,8 @@ def load_seed_targets(path: Path | None = None) -> list[Target]:
         targets.append(_node_target(raw))
     for raw in doc.get("epicbox", []):
         targets.append(_epicbox_target(raw))
+    for raw in doc.get("pool", []):
+        targets.append(_pool_target(raw))
 
     slugs = [t.slug for t in targets]
     duplicates = {s for s in slugs if slugs.count(s) > 1}

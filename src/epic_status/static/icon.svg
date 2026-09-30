@@ -1,4 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Epic Cash status">
-  <rect width="32" height="32" rx="7" fill="#12100d" />
-  <path d="M8 9h16v4H13v3h9v4h-9v3h11v4H8z" fill="#f6d471" />
+<!--
+  Healthy. One of four state tiles; see icon-degraded.svg, icon-down.svg, icon-unknown.svg.
+
+  The tile carries the state and the glyph carries the identity, so the mark's SHAPE never
+  changes and its COLOUR always means something. That split is what makes a 16px favicon
+  useful: at tab size a hue is readable and a 2px detail is not.
+
+  Glyph: the E's bottom arm is split into three cells, the same visual language as the
+  history bars on the board. The 0.9-unit gaps fill in below ~24px and it lands on a plain
+  blocky E rather than on mush.
+
+  Each ramp ends on the project's own semantic colour from app.css — #40c057 ok,
+  #c98a3e warn, #e03131 danger — and starts on a lighter tint of it, so the tile reads as
+  itself at 16px without the palette drifting away from the rest of the site.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Epic Cash status: healthy">
+  <linearGradient id="t" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#6ee7a8" />
+    <stop offset="1" stop-color="#40c057" />
+  </linearGradient>
+  <rect width="32" height="32" rx="7" fill="url(#t)" />
+  <g fill="#12100d">
+    <rect x="8" y="8" width="4" height="16" />
+    <rect x="12" y="8" width="12" height="3.8" />
+    <rect x="12" y="14.1" width="8" height="3.8" />
+    <rect x="12" y="20.2" width="3.4" height="3.8" />
+    <rect x="16.3" y="20.2" width="3.4" height="3.8" />
+    <rect x="20.6" y="20.2" width="3.4" height="3.8" />
+  </g>
 </svg>

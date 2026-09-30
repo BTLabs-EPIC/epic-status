@@ -109,10 +109,20 @@
   --code-ink: #fbe5a6;
   --stripe: rgba(255, 249, 249, 0.03);
 
-  --ok-ink: #b2f2bb;
-  --ok-bg: rgba(64, 192, 87, 0.12);
-  --ok-line: rgba(64, 192, 87, 0.4);
-  --ok-dot: #40c057;
+  /* Healthy is deliberately desaturated. The old value was a full #40c057 on every
+     dot, every state word and every history bar, which meant a page where nothing was
+     wrong was the most colourful thing on the site and a single fault had to compete
+     with forty green ticks to be noticed. Saturated hues are now spent only on
+     degraded and down; `--ok-*` survives for the one accented word in the verdict,
+     where a single green noun is the point. */
+  --pulse-ring: rgba(143, 212, 155, 0.55);
+  --rest-ink: #93a396;
+  --rest-dot: #55665a;
+  --rest-bar: #44523f;
+  --ok-ink: #8fd49b;
+  --ok-bg: rgba(64, 192, 87, 0.1);
+  --ok-line: rgba(64, 192, 87, 0.3);
+  --ok-dot: #55665a;
   --warn-ink: #ffd8a8;
   --warn-bg: rgba(201, 138, 62, 0.18);
   --warn-line: rgba(201, 138, 62, 0.5);
@@ -153,10 +163,14 @@
   --chrome-dim: #b3aa9c;
   --chrome-line: #322e29;
 
+  --pulse-ring: rgba(35, 112, 50, 0.35);
+  --rest-ink: #55665a;
+  --rest-dot: #7f8f80;
+  --rest-bar: #aab8a6;
   --ok-ink: #237032;
-  --ok-bg: rgba(64, 192, 87, 0.12);
-  --ok-line: rgba(64, 192, 87, 0.45);
-  --ok-dot: #2f9e44;
+  --ok-bg: rgba(64, 192, 87, 0.1);
+  --ok-line: rgba(64, 192, 87, 0.35);
+  --ok-dot: #7f8f80;
   --warn-ink: #7a4a12;
   --warn-bg: rgba(201, 138, 62, 0.16);
   --warn-line: rgba(201, 138, 62, 0.5);
@@ -288,16 +302,15 @@ a {
   color: var(--chrome-ink);
 }
 
+/* The state tile, shared with the favicon. It used to be a gold CSS square with a letter
+   in it, which meant the header mark and the tab icon were two different drawings of the
+   same thing and drifted apart. Now it is one SVG: geometry here, artwork in the file. */
 .brand-mark {
   width: var(--ctl-sm);
   height: var(--ctl-sm);
   border-radius: 6px;
-  background: var(--gradient-gold);
-  color: #1b1a18;
-  display: grid;
-  place-items: center;
-  font-size: var(--t-small);
-  font-weight: 800;
+  display: block;
+  flex: 0 0 auto;
 }
 
 .topnav {
@@ -369,6 +382,73 @@ a {
   border-color: var(--line-strong);
 }
 
+/* ------------------------------------------------------- network switch */
+
+/* Mainnet / Floonet. A segmented control, because the options are mutually exclusive
+ * views of the same page and the reader has to see which one they are on without
+ * opening anything — the two things a <select> cannot do at a glance.
+ *
+ * It sits between the brand and `.topnav`, deliberately outside that scrolling region:
+ * `.topnav` is `overflow-x: auto` because "Request a server" already pushes it to
+ * scrolling at 390px, and the control that says which network the whole page describes
+ * must not be the thing that scrolls out of view.
+ *
+ * Follows the topbar's explicit light-mode overrides rather than the `.chrome-island`
+ * token trick, because the topbar itself does — it is not an island, so the tokens are
+ * still the light-page values in here. */
+.chainsel {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+[data-theme='light'] .chainsel {
+  border-color: var(--chrome-line);
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.chainsel a {
+  padding: 0 var(--sp-8);
+  height: calc(var(--ctl-sm) - 6px);
+  display: inline-flex;
+  align-items: center;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--ink-dim);
+  text-decoration: none;
+}
+
+[data-theme='light'] .chainsel a {
+  color: var(--chrome-dim);
+}
+
+.chainsel a:hover {
+  color: var(--ink);
+}
+
+/* The selected segment is a filled chip, not a recolouring. `.topnav` marks its current
+   page by changing the text colour, which is right for one link among several — but in a
+   segmented control the question is which half is *on*, and a filled surface answers it
+   without depending on hue at all. The dark ink on gold is fixed rather than tokenised
+   because the fill is gold in both themes. */
+.chainsel a[aria-current='page'] {
+  background: var(--gold-light);
+  color: #17140d;
+  font-weight: 600;
+}
+
+.chainsel a:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+}
+
 /* ------------------------------------------------------------------ main */
 
 main {
@@ -390,65 +470,168 @@ main {
   max-width: 62ch;
 }
 
-/* --------------------------------------------------------------- verdict */
+/* ------------------------------------------------------------------ hero */
 
-/* The headline. One sentence derived from data already collected, so a reader who
-   gets no further than the first screen still leaves with the answer. */
-.verdict {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-12);
-  padding: var(--sp-16);
-  border: 1px solid var(--line);
-  border-left-width: 3px;
-  border-radius: 8px;
-  background: var(--s1);
-  margin-bottom: var(--sp-16);
-}
-
-.verdict-ok {
-  border-left-color: var(--ok-line);
-  background: var(--ok-bg);
-}
-.verdict-warn {
-  border-left-color: var(--warn-line);
-  background: var(--warn-bg);
-}
-.verdict-bad {
-  border-left-color: var(--danger-line);
-  background: var(--danger-bg);
-}
-.verdict-info {
-  border-left-color: var(--info-line);
-  background: var(--info-bg);
+/* The answer, at the size of an answer.
+ *
+ * This replaced a tinted callout containing a bold 16px line. The service already
+ * computes a judgement — can a reader transact right now — and the old block stated it
+ * more quietly than the block heights underneath it. There is no surface here and no
+ * border: the statement is the element. A box drawn round the most important sentence
+ * on a page is the interface apologising for it.
+ */
+.hero {
+  padding: var(--sp-32) 0 var(--sp-24);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: var(--sp-32);
 }
 
-.verdict-text {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.verdict-text strong {
-  display: block;
+.hero-answer {
+  margin: 0;
   font-family: var(--font-display);
-  font-size: 1rem;
+  font-size: clamp(1.75rem, 1.1rem + 3.1vw, 3.25rem);
   font-weight: 700;
+  line-height: 1.04;
+  letter-spacing: -0.03em;
+  /* Headlines break where the writer would break them, not where the box ends. */
+  text-wrap: balance;
+  max-width: 24ch;
 }
 
-.verdict-text span {
-  display: block;
-  font-size: var(--t-small);
+/* The one word that changes colour, and the only saturated thing on a healthy page.
+   Keeping it to one word is the whole discipline: a sentence with three coloured words
+   has no emphasis. */
+.hero-answer em {
+  font-style: normal;
+  color: var(--rest-ink);
+}
+
+.tone-ok .hero-answer em {
+  color: var(--ok-ink);
+}
+.tone-warn .hero-answer em {
+  color: var(--warn-ink);
+}
+.tone-bad .hero-answer em {
+  color: var(--danger-ink);
+}
+.tone-info .hero-answer em {
+  color: var(--info-ink);
+}
+
+.hero-second {
+  margin: var(--sp-16) 0 0;
+  font-size: 1.0625rem;
   color: var(--ink-dim);
-  margin-top: var(--sp-2);
+  max-width: 52ch;
 }
 
-.verdict-meta {
-  flex: 0 0 auto;
-  text-align: right;
+/* The consequence for the reader, present only when there is one. On a healthy page
+   this element does not render at all, because a reassurance nobody needs is noise. */
+.hero-detail {
+  margin: var(--sp-8) 0 0;
+  font-size: var(--t-body);
+  color: var(--ink);
+  max-width: 56ch;
+}
+
+.tone-bad .hero-detail,
+.tone-warn .hero-detail {
+  padding-left: var(--sp-12);
+  border-left: 1px solid var(--danger-line);
+}
+
+.tone-warn .hero-detail {
+  border-left-color: var(--warn-line);
+}
+
+/* ---- the four facts ---- */
+
+/* Not five equal tiles. The chain tip is what the page is about, so it is set larger
+   and first; the three counts are supporting figures. Equal weight across five cells
+   was the hero-metric template, and it left the reader to work out which number
+   mattered. */
+/* Chain tip full width, then the three counts side by side. In a two-column grid the third
+   count was orphaned onto a row of its own, which read as though it belonged to something
+   else. */
+.hero-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-20) var(--sp-16);
+  margin: var(--sp-32) 0 0;
+}
+
+@media (min-width: 720px) {
+  /* All four sized to content and packed left. `auto` on the lead column pushed the
+     three counts to the far right edge with 500px of nothing between them and the chain
+     height they belong beside — the numbers stopped reading as one group. */
+  .hero-facts {
+    grid-template-columns: repeat(4, max-content);
+    justify-content: start;
+    gap: var(--sp-32);
+    align-items: end;
+  }
+}
+
+.fact {
+  min-width: 0;
+}
+
+.fact dt {
+  font-size: var(--t-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin: 0 0 var(--sp-4);
+}
+
+.fact dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 1.0625rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  color: var(--ink);
+}
+
+/* The denominator is context, not a number to read. Dimming it means "3/3" parses as three at a
+   glance instead of two numbers and a slash. Targeted by class, not by `dd span`, because the
+   numerator is a span too now — it needs its own element so a poll can update it without
+   rewriting the slash and the total. */
+.fact dd .denom {
+  color: var(--ink-dim);
+}
+
+.fact small {
+  display: block;
+  font-family: var(--font-ui);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  margin-top: var(--sp-6);
+}
+
+.fact-lead {
+  grid-column: 1 / -1;
+}
+
+@media (min-width: 720px) {
+  .fact-lead {
+    grid-column: auto;
+    padding-right: var(--sp-32);
+    border-right: 1px solid var(--line);
+  }
+}
+
+.fact-lead dd {
+  font-size: clamp(1.75rem, 1.3rem + 1.6vw, 2.5rem);
+  letter-spacing: -0.02em;
+}
+
+.hero-stamp {
+  margin: var(--sp-24) 0 0;
   font-family: var(--font-mono);
   font-size: var(--t-micro);
   color: var(--ink-dim);
-  line-height: 1.5;
 }
 
 /* ------------------------------------------------------------------ dot */
@@ -518,6 +701,18 @@ main {
   min-width: 0;
 }
 
+/* Five tiles into two columns leaves one orphan. Spanning it is tidier than a
+   ragged half-row, and it only applies below the breakpoint where all five fit. */
+.strip > div:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+@media (min-width: 900px) {
+  .strip > div:last-child:nth-child(odd) {
+    grid-column: auto;
+  }
+}
+
 .strip dt {
   font-size: var(--t-micro);
   letter-spacing: 0.06em;
@@ -547,6 +742,32 @@ main {
 
 .group {
   margin-bottom: var(--sp-32);
+}
+
+/* The three groups are not equal, and the layout now knows it. A forked chain breaks
+   everything; a dead relay breaks one transport; a dead pool costs its own miners. The
+   score already excludes relays and pools for exactly that reason. */
+.group-primary .group-head h2 {
+  font-size: 1.25rem;
+}
+
+/* No rule under the heading. The table immediately below opens with its own border and a
+   tinted header band, so this drew a second horizontal line a few pixels above the first. */
+.group-primary .group-head {
+  border-bottom-color: transparent;
+}
+
+.group-primary {
+  margin-bottom: var(--sp-40);
+}
+
+.group:not(.group-primary) .group-head h2 {
+  font-size: 0.9375rem;
+  color: var(--ink-dim);
+}
+
+.group:not(.group-primary) .group-head {
+  border-bottom-color: transparent;
 }
 
 .group-head {
@@ -580,23 +801,40 @@ main {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: var(--sp-8);
+  gap: 0;
 }
 
+.rows > .row:first-child,
+.row-head + .row {
+  border-top: 0;
+}
+
+/* Card mode is hairlines and type, not a bordered panel per host. A rounded box with a
+   surface tint around every row spends a phone's whole width on a container that says
+   nothing; one rule between hosts says the same thing in one pixel. */
 .row {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: var(--sp-12);
-  background: var(--s1);
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  padding: var(--sp-16) 0;
+  background: transparent;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  /* Three rows. `meta` and `why` were both assigned `meta` at one point and
+  /* Four rows. `meta` and `why` were both assigned `meta` at one point and
      silently stacked on top of each other — the sparkline drew straight through the
-     latency text. Grid does not warn about that; a phone screenshot did. */
+     latency text. Grid does not warn about that; a phone screenshot did. `spark`
+     has its own row for the same reason: it used to be a flex sibling of the reason
+     text, so its position moved with the length of a sentence.
+
+     `tog` is a fourth column on the first line only, so the chevron sits beside the
+     state word rather than below the card. */
   grid-template-areas:
     'dot host state'
     'meta meta meta'
-    'why  why  why';
+    'up   up   up'
+    'spark spark spark'
+    'why  why  why'
+    'det  det  det';
   gap: var(--sp-8) var(--sp-12);
   align-items: center;
 }
@@ -642,12 +880,11 @@ main {
   vertical-align: 1px;
 }
 
-/* The one place the instance operator's own infrastructure is marked. Listing
-   your own hosts on a page you control without saying so reads as promotion. */
-.badge-ours {
-  border-color: var(--warn-line);
-  color: var(--warn-ink);
-}
+/* There used to be an `ours` badge here, marking the instance operator's own hosts.
+   It is gone, and not because marking them was dishonest — it is that "ours" has no
+   referent on a page a stranger opened. Read cold it says *your* node, which is the
+   one thing it does not mean. The operator column already says btlabs on those rows,
+   which is the same disclosure without the ambiguity. */
 
 .row-state {
   grid-area: state;
@@ -669,7 +906,8 @@ main {
 }
 
 .state-healthy b {
-  color: var(--ok-ink);
+  color: var(--rest-ink);
+  font-weight: 500;
 }
 .state-degraded b {
   color: var(--warn-ink);
@@ -681,23 +919,47 @@ main {
   color: var(--ink-dim);
 }
 
+/* Card mode: a readout, not a sentence.
+ *
+ * This was a wrapping flex line, so the values ran together as "height 3,722,051 vs tip at tip
+ * version 4.0.4" and re-wrapped differently on every row depending on how long each value
+ * happened to be. Nothing lined up and there was no way to scan one figure down the list.
+ *
+ * Now a two-column grid of stacked label-over-value blocks: labels and values align down the
+ * card, each pair is one unit that cannot be split across a line break, and the grid collapses
+ * to one column on a very narrow screen without any of it reflowing into prose. */
 .row-meta {
   grid-area: meta;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-4) var(--sp-16);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: var(--sp-12) var(--sp-16);
   font-family: var(--font-mono);
-  font-size: var(--t-micro);
-  color: var(--ink-dim);
+  font-size: var(--t-small);
+  color: var(--ink);
   font-variant-numeric: tabular-nums;
-  align-items: center;
+}
+
+.row-meta > .m {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
 }
 
 .row-meta em {
   font-style: normal;
+  font-family: var(--font-ui);
+  font-size: var(--t-micro);
   color: var(--ink-dim);
-  opacity: 0.7;
-  margin-right: var(--sp-4);
+}
+
+/* A slot a kind has no value for. `visibility: hidden` keeps the column in the table, where
+   the point is that Version stays put; in card mode there is no column to hold open and an
+   invisible block is just a hole. */
+@media (max-width: 899px) {
+  .row-meta > .m-empty {
+    display: none;
+  }
 }
 
 .row-meta b {
@@ -707,6 +969,70 @@ main {
 
 .lag-warn b {
   color: var(--warn-ink);
+}
+
+/* ------------------------------------------------- relay certificate marker */
+
+/* The TLS column when a certificate is inside the renewal window.
+ *
+ * This replaces a `lag-warn` class that was toggled onto the same cell and styled
+ * nothing at all: the only rule for it is `.lag-warn b`, and the certificate value was
+ * bare text with no <b> around it. Both the server and the poll loop were setting a
+ * class that had no effect, which is why a relay 14 days from expiry looked identical to
+ * one 80 days out while its row said "Degraded" — the state was shouting and the column
+ * that held the actual fact was silent.
+ *
+ * Amber on the number, plus a dotted underline, plus a glyph. Three signals because one
+ * of them is colour and colour alone is not a signal — the same rule `.ver-old` follows
+ * one screen down, and this is deliberately its sibling in weight. An expiring
+ * certificate and an out-of-date version are the same class of fact: worth seeing,
+ * almost never an emergency. */
+.cert {
+  min-width: 0;
+}
+
+/* The value and its marker on one line. `.row-meta > .m` is a column flex container — the
+   label sits above the value on a phone — so two children means two lines, and the glyph
+   dropped underneath the number instead of sitting beside it. */
+.cert-line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.cert-warn b {
+  color: var(--warn-ink);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--warn-line);
+  text-underline-offset: 3px;
+}
+
+/* Hidden, not absent, so crossing the threshold on a poll is one class toggle. `display:
+   none` also takes it out of the accessibility tree, which is what we want — an
+   unlabelled marker announced on every healthy relay would be noise in a screen reader
+   and nothing on screen. */
+.cert-flag {
+  display: none;
+}
+
+.cert-warn .cert-flag {
+  display: inline-flex;
+  align-items: center;
+  /* Saturated amber rather than `--warn-ink`: the glyph is 12px of stroke and needs the
+     stronger tone to register at that size, particularly in light mode where `--warn-ink`
+     is a dark brown chosen for text contrast. */
+  color: var(--warn-dot);
+  cursor: help;
+}
+
+/* A marker that opens a tooltip on hover has to open it on focus too, and a focus ring is
+   how anyone knows it can be focused at all. */
+.cert-flag:focus-visible {
+  outline: 2px solid var(--warn-dot);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 .row-detail {
@@ -722,19 +1048,26 @@ main {
   vertical-align: -2px;
 }
 
-.flag svg {
-  display: block;
-  width: 18px;
-  height: 12.6px;
+/* Real artwork now, from flag-icons. It keeps the hairline — a white or pale field needs a
+   boundary to read as a rectangle rather than as a hole in the page — but nothing else: the
+   drawings are 4:3 and size themselves. */
+.flag-img {
+  display: inline-block;
+  width: 20px;
+  height: 15px;
   border: 1px solid var(--line-strong);
   border-radius: 2px;
+  vertical-align: -3px;
+  /* Flags carry fine detail at 20px. Crisp scaling keeps a stripe a stripe. */
+  object-fit: cover;
 }
 
 /* Where the country is known but no drawing exists, and where it is not known at
    all. Both occupy the same slot as a flag so the column never looks broken —
    RDAP genuinely returns no country for some allocations, including Vultr's. */
-.flag-code,
-.flag-none {
+/* A country the flag set cannot draw: the two-letter code, in a chip. Still a box, because a
+   code needs a boundary to read as a value rather than as stray text. */
+.flag-code {
   font-family: var(--font-mono);
   font-size: var(--t-micro);
   letter-spacing: 0.04em;
@@ -746,9 +1079,18 @@ main {
   justify-content: center;
 }
 
+/* Location unknown: a globe with a question mark, at flag size. The word "unknown" in a chip
+   was the widest thing this column ever held — wider than any flag, so the column was sized
+   for it and at four-digit latencies it still collided with the number beside it. */
 .flag-none {
-  opacity: 0.65;
-  text-transform: lowercase;
+  color: var(--ink-dim);
+  opacity: 0.7;
+}
+
+/* No border. `.flag svg` gives real flags a hairline so a white or pale field still reads as a
+   rectangle; a circular globe inside that box looks like an icon someone framed by mistake. */
+.flag-none .icon {
+  display: block;
 }
 
 /* --------------------------------------------------------------- sparkline */
@@ -764,8 +1106,29 @@ main {
   display: block;
   width: 3px;
   border-radius: 1px;
-  background: var(--ok-dot);
-  opacity: 0.85;
+  background: var(--rest-bar);
+}
+
+/* In the table layout the strip owns the row's spare width, so the bars flex into it
+   rather than leaving it empty. Capped at 10px, which is what 20-25 checks need to fill
+   the column exactly at this content width; a tighter cap left a second void, just moved
+   to the other side of the strip. Same reasoning as the 90-day `.bar` on the history
+   page, so the two read as one component. Height stays uniform at any width, because
+   pass/fail is the only information here and a varying height would imply a magnitude
+   that does not exist. */
+@media (min-width: 900px) {
+  .spark {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .spark i {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 2px;
+    max-width: 10px;
+  }
 }
 
 .spark i.bad {
@@ -832,6 +1195,15 @@ main {
   gap: var(--sp-4);
 }
 
+/* A caveat that belongs to the form rather than to one input. Sized and coloured
+   like supporting text so it cannot compete with the labels above it. */
+.field-note {
+  margin: 0;
+  font-size: var(--t-small);
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+
 .field > span {
   font-size: var(--t-micro);
   letter-spacing: 0.05em;
@@ -882,9 +1254,12 @@ main {
   border-color: var(--mark);
 }
 
+/* One hairline all round, tinted from the fill, for the same reason as `.verdict`:
+   a thick coloured rule down one edge is the single most recognisable tell of a
+   generated interface, and the tinted surface plus the state word already carry the
+   meaning without it. */
 .notice {
   border: 1px solid var(--line);
-  border-left-width: 3px;
   border-radius: 6px;
   padding: var(--sp-12) var(--sp-16);
   margin-bottom: var(--sp-16);
@@ -892,19 +1267,19 @@ main {
 }
 
 .notice-ok {
-  border-left-color: var(--ok-line);
+  border-color: var(--ok-line);
   background: var(--ok-bg);
   color: var(--ok-ink);
 }
 
 .notice-bad {
-  border-left-color: var(--danger-line);
+  border-color: var(--danger-line);
   background: var(--danger-bg);
   color: var(--danger-ink);
 }
 
 .notice-info {
-  border-left-color: var(--info-line);
+  border-color: var(--info-line);
   background: var(--info-bg);
 }
 
@@ -984,7 +1359,7 @@ pre {
 }
 
 .stale {
-  border-left-color: var(--warn-line);
+  border-color: var(--warn-line);
   background: var(--warn-bg);
   color: var(--warn-ink);
 }
@@ -993,7 +1368,7 @@ pre {
 
 @media (min-width: 900px) {
   .strip {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   /* The table appears only here. Below this width the same rows are cards, which
@@ -1005,33 +1380,205 @@ pre {
     overflow: hidden;
   }
 
+  /* Console density. One line per host, tight enough that eight hosts and three groups
+     fit a laptop screen without scrolling — which is the point of a board an operator
+     checks during an incident. */
   .row {
     border: 0;
     border-top: 1px solid var(--line);
     border-radius: 0;
     background: transparent;
-    grid-template-columns: auto minmax(12rem, 1fr) repeat(4, minmax(0, auto)) 7rem;
-    /* Two rows. Without an explicit `meta` area here the reason line fell into an
-       implicit row at column one and sat underneath the traffic light. */
-    grid-template-areas:
-      'dot host m1 m2 m3 m4 state'
-      '.   why  why why why why why';
     align-items: center;
-    padding: var(--sp-12) var(--sp-16);
-    column-gap: var(--sp-20);
+    padding: var(--sp-8) var(--sp-16);
+    column-gap: var(--sp-16);
     row-gap: var(--sp-4);
   }
 
-  .row:first-child {
+  /* Sentence case, not uppercase. Twenty-seven uppercase letterspaced micro-labels
+     across one screen was a texture the eye slid off, and it spent the one treatment
+     that could have marked something as important. The header is now just small text on
+     a tinted rule — still clearly a header, no longer competing.
+
+     `display: grid` must be declared here rather than only in the no-subgrid fallback:
+     without it the header stays a block, its spans flow inline, and the labels pack to
+     the left while the values below sit on the real columns. */
+  .row-head {
+    display: grid;
+    padding: var(--sp-6) var(--sp-16);
+    column-gap: var(--sp-16);
+    background: var(--s1);
+    border-bottom: 1px solid var(--line);
+    font-size: var(--t-micro);
+    letter-spacing: 0.01em;
+    color: var(--ink-dim);
+  }
+
+  /* No top border on the first data row: the header already draws that line. */
+  .row-head + .row {
     border-top: 0;
   }
 
-  .row:nth-child(even) {
+  /* Children 1 is the header, so data rows are children 2, 3, 4... and the second of
+     them — the one that wants a stripe — is an odd child. `.row` excludes the header
+     from the match, which is what makes the parity work out. */
+  .row:nth-child(odd) {
     background: var(--stripe);
   }
 
-  /* Each metric is placed explicitly rather than flowing, so the columns line up
-     across rows even when a value is missing. */
+  /* ---------------------------------------------------------- shared columns
+   *
+   * One track list for every table, not one per kind. Each row and the header subgrid onto
+   * the <ul>, so alignment within a table is structural; declaring the same widths for all
+   * three tables makes the *tables* line up with each other too, which is what "columns out
+   * of alignment" meant — Version sat in the first data column for relays and the fourth for
+   * nodes, and every column after it landed somewhere different in each table.
+   *
+   * Widths are fixed rather than content-sized. `max-content` made a column as wide as its
+   * widest value, so the same column was a different width in each table and moved whenever
+   * a value changed length — a node reaching 10,000,000 blocks would have shifted every
+   * column to its right. Fixed widths cost a little slack and buy a page that never moves.
+   *
+   * The free space goes to `host` and to `spark`, which are the two that can use it. Nothing
+   * else grows, so nothing else moves.
+   *
+   * **A track is 1rem wider than the cell in it.** `.row` and `.row-head` re-declare
+   * `column-gap: var(--sp-16)` inside the subgrid, and a subgrid's own gap is taken out of
+   * the parent's tracks — so a cell's usable width is its track minus 16px. Every width
+   * here is content + 1rem, and forgetting that is how the latency bar came to be 16px too
+   * wide for its column while the track was exactly the size it claimed to be.
+   */
+  .rows {
+    grid-template-columns:
+      auto                  /* traffic light */
+      minmax(9rem, 1fr)     /* host */
+      6.5rem                /* height · miners · TLS expires */
+      7.25rem               /* vs tip · last block. Sized for the longest age the
+                               `relative` filter can produce — "364d 23h ago", 12
+                               monospace characters — because a pool's last-block age
+                               is the one value here with no upper bound on its length,
+                               and at 4.5rem it overflowed its track and printed past
+                               the column to its right. */
+      4rem                  /* version, same column in every table */
+      5rem                  /* location: sized for the `unknown` chip, not for a flag */
+      9.5rem                /* latency: 4.25rem number + 0.5rem gap + 3.5rem bar = 8.25rem
+                               of content, plus the 1rem column gap deducted below. At 7rem
+                               the bar printed over the 24h value on every row. */
+      4rem                  /* 24h */
+      minmax(4rem, 1.4fr)   /* recent checks, right-aligned */
+      5.5rem;               /* state */
+  }
+
+  @supports (grid-template-columns: subgrid) {
+    .row,
+    .row-head {
+      grid-column: 1 / -1;
+      grid-template-columns: subgrid;
+      grid-template-areas: none;
+    }
+
+    /* Placed by line number rather than by area name, because `grid-template-areas` would
+       redeclare the columns and break out of the subgrid.
+     *
+     * Every rule repeats `grid-row: 1`, and that redundancy is load-bearing: `.row-up` and
+     * `.row-spark` carry `grid-area` for the card layout from rules later in this file, and
+     * `grid-area` is a shorthand that resets grid-row too. Without a two-class selector here
+     * the later declaration wins on source order and both cells drop to an implicit second
+     * row. Caught by screenshotting; the columns were never the thing that broke. */
+    .row > *,
+    .row-meta > .m {
+      grid-row: 1;
+    }
+
+    .row-dot {
+      grid-column: 1;
+    }
+    .row-host {
+      grid-column: 2;
+    }
+    .row-meta > .m1 {
+      grid-column: 3;
+    }
+    .row-meta > .m2 {
+      grid-column: 4;
+    }
+    .row-meta > .m3 {
+      grid-column: 5;
+    }
+    .row-meta > .m-where {
+      grid-column: 6;
+    }
+    .row-meta > .m-lat {
+      grid-column: 7;
+    }
+    .group-node .row-up,
+    .group-epicbox .row-up,
+    .group-pool .row-up {
+      grid-column: 8;
+      grid-row: 1;
+    }
+    .group-node .row-spark,
+    .group-epicbox .row-spark,
+    .group-pool .row-spark {
+      grid-column: 9;
+      grid-row: 1;
+    }
+    .group-node .row-state,
+    .group-epicbox .row-state,
+    .group-pool .row-state {
+      grid-column: 10;
+      grid-row: 1;
+    }
+    .group-node .row-why,
+    .group-epicbox .row-why,
+    .group-pool .row-why {
+      grid-column: 2 / -1;
+      grid-row: 2;
+    }
+  }
+
+  /* Fallback without subgrid: the same ten tracks per row. Columns can drift by a pixel or
+     two between rows, which is the old behaviour and still legible — the page does not
+     collapse into one stacked column, which an unsupported `subgrid` keyword alone would
+     have caused. */
+  @supports not (grid-template-columns: subgrid) {
+    .row,
+    .row-head {
+      grid-template-columns:
+        auto minmax(9rem, 1fr) 6.5rem 7.25rem 4rem 5rem 9.5rem 4rem
+        minmax(4rem, 1.4fr) 5.5rem;
+      grid-template-areas:
+        'dot host m1 m2 m3 where lat up spark state'
+        '.   why  why why why why why why why why'
+        'det det  det det det det det det det det';
+    }
+
+    .row-meta > .m-where {
+      grid-area: where;
+    }
+    .row-meta > .m-lat {
+      grid-area: lat;
+    }
+  }
+
+  /* Right-aligned, so the strip ends at the same x on every row of every table and the
+     right-hand edge of the data is a straight line down the page. Its left edge moves with
+     the number of checks held, which is the variable thing and belongs on the inside. */
+  .row-spark {
+    justify-content: flex-end;
+  }
+
+  .h-spark {
+    text-align: right;
+  }
+
+  /* An empty slot for a kind that has no value there. Present so Version stays in column 5
+     everywhere; `aria-hidden` because there is nothing to announce. */
+  .m-empty {
+    visibility: hidden;
+  }
+
+  /* `display: contents` so the metric cells become direct grid items of the row and
+     can therefore reach the row's columns — and, with subgrid, the table's. */
   .row-meta {
     display: contents;
   }
@@ -1049,41 +1596,43 @@ pre {
     display: none;
   }
 
-  .row-meta > .m1 {
-    grid-area: m1;
+  /* Keyed to role, not to slot number. The flag sits in m3 for a relay and m4 for a node,
+     and keying this to the slot meant adding a column to one kind silently realigned
+     another kind's flag. Horizontal alignment is set once, with the header, below. */
+  .row-meta > .m-where {
+    min-width: 0;
+    overflow: hidden;
   }
-  .row-meta > .m2 {
-    grid-area: m2;
-  }
-  .row-meta > .m3 {
-    grid-area: m3;
+
+  /* Headers align with the values beneath them, keyed to a class on the header cell
+     rather than to its position. The position-keyed version — three `nth-child` lists,
+     one per kind — is what put Location, Version, 24h and Recent checks over values
+     aligned the other way: the lists still described the column order from before
+     Version moved into a shared slot, and nothing in CSS complains about that.
+   *
+   * One line per column, in column order, so this reads against the `head()` macro. */
+  .row-head > .h-host {
     text-align: left;
   }
-  .row-meta > .m4 {
-    grid-area: m4;
-  }
-
-  .row-head {
-    display: grid;
-    grid-template-columns: auto minmax(12rem, 1fr) repeat(4, minmax(0, auto)) 7rem;
-    grid-template-areas: 'dot host m1 m2 m3 m4 state';
-    column-gap: var(--sp-20);
-    padding: var(--sp-8) var(--sp-16);
-    background: var(--s1);
-    border-bottom: 1px solid var(--line);
-    font-size: var(--t-micro);
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
-    color: var(--ink-dim);
-  }
-
-  .row-head > span:nth-child(3),
-  .row-head > span:nth-child(4),
-  .row-head > span:nth-child(6) {
+  .row-head > .h-m1,
+  .row-head > .h-m2,
+  .row-head > .h-m3 {
     text-align: right;
   }
-
-  .row-head > span:last-child {
+  /* Centred, header and value both. The flag is a fixed-width picture in a 5rem track, so
+     neither edge of it means anything — left-aligning put it hard against the latency
+     column and right-aligning put it under the "n" of Location. Centre is the only
+     alignment where the artwork and the word agree. */
+  .row-head > .h-where,
+  .row-meta > .m-where {
+    text-align: center;
+  }
+  .row-head > .h-lat {
+    text-align: left;
+  }
+  .row-head > .h-up,
+  .row-head > .h-spark,
+  .row-head > .h-state {
     text-align: right;
   }
 }
@@ -1168,6 +1717,293 @@ pre {
   color: var(--ink-dim);
 }
 
+/* 24h uptime. Tabular numerals and the same monospace as the other measurements,
+   because a column of percentages that shifts by a digit is harder to scan than the
+   value is worth. Dimmed rather than emphasised: it is context for the state, not a
+   competing verdict. */
+.row-up {
+  grid-area: up;
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.row-up em {
+  font-style: normal;
+  opacity: 0.7;
+  margin-right: var(--sp-4);
+}
+
+/* Right-aligned only in the table, where it is a column under a right-aligned header.
+   In card mode it is a labelled line like every other value, and inheriting the
+   table's alignment left it stranded on the right of its own row with nothing above or
+   below to align to — visible the moment the card layout was screenshotted. */
+@media (min-width: 900px) {
+  /* Tabular numerals and a fixed column, so "100%" and "99.92%" occupy identical space.
+     Without both, the cell resized whenever the value crossed a digit boundary and pushed
+     everything to its right — visible motion on a page that is otherwise deliberately
+     still. */
+  .row-up {
+    font-size: var(--t-small);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .row-up em {
+    display: none;
+  }
+}
+
+/* ------------------------------------------------------------ latency bar
+ *
+ * The console half of the design. One slow host among eight is instant as a length and
+ * takes eight reads as a figure, so the number and the bar ship together rather than
+ * the bar replacing the number — an operator diagnosing their own endpoint needs the
+ * exact value.
+ *
+ * Widths are classes in 5% steps because this service's CSP has no `unsafe-inline`: a
+ * `style="width:42%"` attribute is dropped by the browser and every bar renders at zero,
+ * silently. See render._lat_w.
+ */
+.lat {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-8);
+}
+
+/* Right-aligned only in the table, where it is a column under a right-aligned header.
+   Inheriting that in card mode left the number stranded on its own line, because a
+   block-level flex child cannot sit beside the <em> label in front of it. */
+@media (min-width: 900px) {
+  /* Left-packed, with the number in a fixed sub-column. Right-packing the pair meant the
+     number's left edge moved with its digit count — "4 ms" and "1274 ms" started in different
+     places — so nothing in the column had a stable left edge for the header to align to. The
+     number still right-aligns within its own width, so magnitudes line up, and the bar now
+     always begins at the same x, which is what makes the bars comparable at a glance. */
+  .lat {
+    display: flex;
+    justify-content: flex-start;
+  }
+
+  /* Left, not right. Right-aligning the number inside its own sub-column still left "4 ms" and
+     "1274 ms" starting in different places, so the header had nothing to line up with — the
+     digits grew leftward from a fixed right edge. Left-aligned, every latency in the column
+     begins at the same x as its header, and the bar still starts at the same x on every row
+     because the number's box is a fixed width whatever it holds. */
+  /* A fixed width, not a minimum. As `min-width` the box grew with its contents, so a
+     four-digit latency pushed the bar 20-odd pixels to the right — out of the latency
+     column and over the 24h value beside it. Every row on the board did it; it read as
+     the bar and the percentage being printed on top of each other. Fixed, the bar starts
+     at the same x on every row, which is also what makes the lengths comparable. */
+  .lat-n {
+    width: 4.25rem;
+    flex: none;
+    text-align: left;
+  }
+
+  /* Superseded by `.h-lat`, which travels with the header cell. Left here only as a note:
+     three per-kind `nth-child` lists is what let the header drift from its column in the
+     first place, so there is exactly one rule for this now and it is keyed to a class. */
+  .row-meta > .m-lat {
+    text-align: left;
+  }
+}
+
+.lat-n {
+  font-variant-numeric: tabular-nums;
+}
+
+.lat-bar {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .lat-bar {
+    display: block;
+    width: 3.5rem;
+    height: 5px;
+    border-radius: 2px;
+    background: var(--stripe);
+    overflow: hidden;
+    flex: none;
+  }
+
+  .lat-fill {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--rest-bar);
+    transition: width var(--dur) var(--ease);
+  }
+
+  /* Bands, so the bar carries a judgement as well as a length. Fast stays neutral —
+     the common case should not draw the eye — and only a genuinely slow host warms up. */
+  .lat-fast {
+    background: var(--rest-bar);
+  }
+  .lat-mid {
+    background: var(--rest-bar);
+  }
+  .lat-slow {
+    background: var(--warn-dot);
+  }
+  .lat-none {
+    background: var(--danger-dot);
+  }
+
+  .lat-w0 { width: 0; }
+  .lat-w5 { width: 5%; }
+  .lat-w10 { width: 10%; }
+  .lat-w15 { width: 15%; }
+  .lat-w20 { width: 20%; }
+  .lat-w25 { width: 25%; }
+  .lat-w30 { width: 30%; }
+  .lat-w35 { width: 35%; }
+  .lat-w40 { width: 40%; }
+  .lat-w45 { width: 45%; }
+  .lat-w50 { width: 50%; }
+  .lat-w55 { width: 55%; }
+  .lat-w60 { width: 60%; }
+  .lat-w65 { width: 65%; }
+  .lat-w70 { width: 70%; }
+  .lat-w75 { width: 75%; }
+  .lat-w80 { width: 80%; }
+  .lat-w85 { width: 85%; }
+  .lat-w90 { width: 90%; }
+  .lat-w95 { width: 95%; }
+  .lat-w100 { width: 100%; }
+}
+
+/* ---------------------------------------------------------- sortable headers
+ *
+ * A header that reorders the table is a control, so it is a button: reachable from the
+ * keyboard, and it announces itself. With JavaScript off these are inert and the
+ * server's ordering — health, then latency — stands, which is why nothing here depends
+ * on the sort having run.
+ */
+.sort {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+  position: relative;
+}
+
+.sort:hover,
+.sort:focus-visible {
+  color: var(--ink);
+}
+
+/* The arrow is drawn in the ::after rather than shipped as a glyph: an arrow character
+   is exactly the kind of rare codepoint that renders as a fallback box on a minimal
+   font set, which is why the flags on this page are inline SVG too. */
+.sort[data-dir]::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: -0.7rem;
+  width: 0;
+  height: 0;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+}
+
+.sort[data-dir='asc']::after {
+  border-bottom: 4px solid currentColor;
+  transform: translateY(-70%);
+}
+
+.sort[data-dir='desc']::after {
+  border-top: 4px solid currentColor;
+  transform: translateY(-30%);
+}
+
+/* --------------------------------------------------- the recent-checks column
+ *
+ * This is the fix for the defect that started the rewrite. The sparkline was a flex
+ * sibling of the reason text inside `.row-why`, so its left edge landed wherever that
+ * sentence happened to end — and because the sentence was only generated for a node
+ * running an out-of-date version, the node on the current release drew its bar at the
+ * far left while the two behind it drew theirs mid-row. Three rows, three different
+ * bar positions, from one inline layout. It now has a column of its own and cannot
+ * move.
+ */
+.row-spark {
+  grid-area: spark;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-width: 0;
+}
+
+.row-spark em {
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  opacity: 0.7;
+}
+
+.spark-empty {
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  opacity: 0.6;
+}
+
+@media (min-width: 900px) {
+  /* Same rule as the metric labels: the column header names it once, so repeating
+     the word on every row is noise. */
+  .row-spark em {
+    display: none;
+  }
+
+  /* Deliberately NOT re-declaring `justify-content` here. It is set once, further up,
+     where the column is described. This block used to say `flex-start` while that one
+     said `flex-end`; both are `@media (min-width: 900px)`, so the later one won silently
+     and the strip sat at the left of its track under a right-aligned "Recent checks".
+     Two rules for one property in two places is how that happens. */
+}
+
+/* A version that is not the released one. Marked, not shouted: an out-of-date node
+   is a fact worth seeing and almost never an emergency, and the released version is
+   named once in the strip above rather than restated on each row. The underline is
+   what carries it for a reader who cannot separate the two hues — colour alone is
+   not a signal anywhere else on this page and should not be here either. */
+.ver-old {
+  color: var(--warn-ink);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--warn-line);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+/* The one outbound link in the summary strip: the released version points at its own
+   release tag, so the number and the link can never disagree. Inherits the strip's
+   numerals rather than the body link colour, because it is a value first. */
+.dd-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 4px;
+}
+
+.dd-link:hover,
+.dd-link:focus-visible {
+  text-decoration-color: currentColor;
+}
+
+
+
 .group-head-bare {
   border: 0;
   padding-bottom: 0;
@@ -1196,4 +2032,1479 @@ pre {
   text-transform: none;
   letter-spacing: 0;
   opacity: 0.8;
+}
+
+
+/* ------------------------------------------------------------ footer layout
+ *
+ * A footer, not an essay. Everything that used to be explained here in three
+ * paragraphs is either evident from the board itself or belongs in the API
+ * reference and the README. What stays is the one fact a reader needs to
+ * interpret the numbers above: how often they are taken and from where.
+ */
+
+.foot-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-8) var(--sp-24);
+}
+
+.foot-nav {
+  display: flex;
+  gap: var(--sp-16);
+  margin-left: auto;
+}
+
+.foot-nav a {
+  text-decoration: none;
+}
+
+.foot-nav a:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+@media (max-width: 560px) {
+  .foot-nav {
+    margin-left: 0;
+  }
+}
+
+
+
+/* ===========================================================================
+ * The API reference
+ *
+ * A first-party page, replacing 863 KB of vendored RapiDoc. The viewer was not broken —
+ * it was generic: its own header, its own filter box, its own navigation, so the page
+ * read as a different product bolted to the side of this one, and the useful part of any
+ * status API (a request you can paste, a response you can recognise) sat below several
+ * screens of generated schema tables.
+ *
+ * Dropping it also removed the one CSP exception in the service: the component injected
+ * styles into shadow roots, which needed `style-src 'unsafe-inline'` on that route. Every
+ * route now ships the same strict policy.
+ * ======================================================================== */
+
+/* A fact that changes how the reader uses the thing, not a decorative aside. Its own
+   treatment because burying "calling this probes nothing" in a paragraph is how it gets
+   missed, and it is the reason the API needs no key. */
+.callout-key {
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: var(--sp-16);
+  margin: 0 0 var(--sp-32);
+  background: var(--s1);
+  font-size: var(--t-body);
+  color: var(--ink-dim);
+  max-width: 72ch;
+}
+
+.callout-key b {
+  color: var(--ink);
+}
+
+.routes {
+  display: grid;
+  gap: var(--sp-12);
+}
+
+.route {
+  border-top: 1px solid var(--line);
+  padding: var(--sp-20) 0 var(--sp-16);
+}
+
+.route:first-child {
+  border-top: 0;
+  padding-top: var(--sp-8);
+}
+
+.route-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  flex-wrap: wrap;
+}
+
+.route-head h3 {
+  margin: 0;
+  font-size: var(--t-body);
+  font-weight: 500;
+}
+
+.route-head h3 a {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.route-head h3 a:hover,
+.route-head h3 a:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* The method, as a label rather than a coloured pill. GET is the overwhelming majority
+   here, so colouring it spends attention on the least surprising thing on the page;
+   POST is the one worth marking because it writes. */
+.verb {
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px var(--sp-6);
+  flex: none;
+}
+
+.verb-post {
+  color: var(--warn-ink);
+  border-color: var(--warn-line);
+}
+
+.route-tag {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+}
+
+.route-why {
+  margin: var(--sp-8) 0 0;
+  font-size: var(--t-body);
+  color: var(--ink-dim);
+  max-width: 74ch;
+}
+
+/* Query parameters as a definition list, not a table. Two of the six routes take one
+   parameter each; a table with a Type and a Required column for that is furniture. */
+.params {
+  margin: var(--sp-12) 0 0;
+  display: grid;
+  gap: var(--sp-6);
+}
+
+.params > div {
+  display: flex;
+  gap: var(--sp-12);
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.params dt {
+  flex: none;
+  min-width: 9rem;
+}
+
+.params dd {
+  margin: 0;
+  font-size: var(--t-small);
+  color: var(--ink-dim);
+  max-width: 62ch;
+}
+
+/* ---- code samples ---- */
+
+.snip {
+  margin: var(--sp-12) 0 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--s1);
+}
+
+.snip figcaption {
+  padding: var(--sp-6) var(--sp-12);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  background: var(--s2);
+}
+
+.snip figcaption code {
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+
+/* Horizontal scroll rather than wrapping. A wrapped shell command cannot be
+   copy-pasted safely, and a copy-pasteable command is the entire point of the block. */
+.snip pre {
+  margin: 0;
+  padding: var(--sp-12);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  line-height: 1.6;
+  color: var(--ink);
+  tab-size: 2;
+}
+
+.snip pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+  white-space: pre;
+}
+
+/* ---- field reference ---- */
+
+/* Only the fields that have caught somebody out, each with the mistake named. A
+   generated schema table lists every field at equal weight, which is the same failure as
+   five equal metric cells: nothing is emphasised, so nothing is read. */
+.fields {
+  margin: var(--sp-16) 0 0;
+  display: grid;
+  gap: 0;
+}
+
+.fields > div {
+  border-top: 1px solid var(--line);
+  padding: var(--sp-16) 0;
+  display: grid;
+  gap: var(--sp-6);
+}
+
+@media (min-width: 820px) {
+  .fields > div {
+    grid-template-columns: 14rem minmax(0, 1fr);
+    gap: var(--sp-24);
+  }
+}
+
+.fields dt {
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  color: var(--ink);
+}
+
+.fields dt code {
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+
+.fields-kind {
+  display: inline-block;
+  margin-left: var(--sp-6);
+  font-family: var(--font-ui);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+}
+
+.fields dd {
+  margin: 0;
+  font-size: var(--t-body);
+  color: var(--ink-dim);
+  max-width: 74ch;
+}
+
+.fields dd b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+
+
+/* ------------------------------------------------------- stable ticking values
+ *
+ * The board keeps updating every second; what read as flickering was the reflow, not the
+ * refresh. A phrase that grows from "just now" to "5s ago" to "1m 12s ago" changes width
+ * on almost every tick, so the text beside it shifts and the eye reads motion. A
+ * fixed-width clock changes one digit at a constant width: same information, same
+ * cadence, no movement.
+ */
+.clock,
+.row-sub-age {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+/* ------------------------------------------------------------- freshness dot
+ *
+ * The indicator is the animation. Text states the cadence once and then holds still;
+ * the dot pulses when an update lands and changes colour only when something is wrong.
+ * That inverts what was there before, where a counter ticked every second under the
+ * headline and the reader had to decide whether motion meant trouble.
+ */
+.live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  margin-right: var(--sp-8);
+  background: var(--rest-dot);
+  vertical-align: 0;
+}
+
+/* A real green, not the desaturated `--ok-dot` the row lights use. Those are held near
+   neutral so a fault is the only saturated thing in the tables; this dot is about the page
+   being live rather than about a host being well, so it is the one green that belongs in
+   the chrome. */
+[data-live='ok'] .live-dot {
+  background: var(--ok-ink);
+}
+[data-live='warn'] .live-dot {
+  background: var(--warn-dot);
+}
+[data-live='bad'] .live-dot {
+  background: var(--danger-dot);
+}
+
+[data-live='warn'] .live-text {
+  color: var(--warn-ink);
+}
+[data-live='bad'] .live-text {
+  color: var(--danger-ink);
+}
+
+/* One short ring on arrival. Deliberately not a loop: a permanently pulsing dot carries no
+   event, and this one means "an update just landed".
+ *
+ * The ring was invisible in dark mode. It expanded from `--ok-line`, which is
+ * `rgba(64,192,87,0.3)` — 30% of a mid green, which reads on paper and disappears against
+ * #08080a. A ring has to be brighter than what it sits on, not a tint of the fill, so it now
+ * starts from the theme's own dot colour and each theme sets its own alpha. */
+.live-dot.is-pulse {
+  animation: live-pulse 1100ms var(--ease) 1;
+}
+
+@keyframes live-pulse {
+  from {
+    box-shadow: 0 0 0 0 var(--pulse-ring);
+  }
+  to {
+    box-shadow: 0 0 0 9px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot.is-pulse {
+    animation: none;
+  }
+}
+
+/* The sub-line under the state word: 1h uptime while healthy, time since the last success
+   otherwise. Fixed width and tabular, for the same reason as the 24h column — it sits in the
+   last column and a resize there drags the whole row. */
+/* 24h, in card mode, styled as one more label-over-value block so it does not read as a
+   different kind of thing from the metrics above it. */
+@media (max-width: 899px) {
+  .row-up {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    font-family: var(--font-mono);
+    font-size: var(--t-small);
+    color: var(--ink);
+  }
+
+  .row-up em {
+    font-style: normal;
+    font-family: var(--font-ui);
+    font-size: var(--t-micro);
+    color: var(--ink-dim);
+  }
+
+  /* The strip gets the full width of the card and its bars stretch into it, which is the one
+     place the card has room to spare. It was overflowing to the edge of the screen at a fixed
+     3px per bar. */
+  .row-spark {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-4);
+  }
+
+  .row-spark em {
+    font-style: normal;
+    font-family: var(--font-ui);
+    font-size: var(--t-micro);
+    color: var(--ink-dim);
+  }
+
+  .row-spark .spark {
+    display: flex;
+    width: 100%;
+    height: 16px;
+    gap: 2px;
+  }
+
+  .row-spark .spark i {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    height: 16px;
+  }
+
+  /* A failed check has to stay distinguishable now that every bar is the same height — height
+     was doing that job in the table. Colour alone is not enough, so a failure is also full
+     opacity against dimmed neighbours. */
+  .row-spark .spark i.bad {
+    height: 16px;
+  }
+}
+
+.row-sub {
+  display: block;
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+
+
+/* --------------------------------------------------------- api: request/response
+ *
+ * Side by side on a wide screen. A route is a request and a shape, and reading them as a
+ * pair is the thing a reference is for; stacked, the response scrolled out of view behind
+ * the command that produced it. */
+.route-code {
+  display: grid;
+  gap: var(--sp-12);
+  margin-top: var(--sp-12);
+}
+
+@media (min-width: 980px) {
+  .route-code {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+
+.route-code .snip {
+  margin-top: 0;
+}
+
+
+
+/* ===========================================================================
+ * The review queue at /admin
+ *
+ * Not linked from the public navigation. Styled from the same tokens as the board rather
+ * than given its own look: a second visual language for the one page that changes what
+ * the first one shows is how the two drift apart.
+ * ======================================================================== */
+
+.admin-who {
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  margin-left: var(--sp-8);
+}
+
+.admin-counts {
+  margin-bottom: var(--sp-32);
+  padding-bottom: var(--sp-24);
+  border-bottom: 1px solid var(--line);
+}
+
+.reqs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+}
+
+.req {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-16);
+  flex-wrap: wrap;
+  padding: var(--sp-16) 0;
+  border-top: 1px solid var(--line);
+}
+
+.req:first-child {
+  border-top: 0;
+}
+
+/* A decided row keeps its evidence and recedes. It is history, not work. */
+.req-accepted,
+.req-rejected {
+  opacity: 0.55;
+}
+
+.req-main {
+  flex: 1 1 22rem;
+  min-width: 0;
+  display: grid;
+  gap: var(--sp-4);
+}
+
+.req-main > b {
+  font-family: var(--font-mono);
+  font-size: var(--t-body);
+  overflow-wrap: anywhere;
+}
+
+.req-tags {
+  display: flex;
+  gap: var(--sp-6);
+  align-items: center;
+}
+
+.req-tags .badge {
+  margin-left: 0;
+}
+
+.req-meta {
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+
+/* The last probe error, which is usually the reason a row is still waiting. Warn rather
+   than danger: a submission that has not passed yet is not a fault on this service. */
+.req-error {
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--warn-ink);
+  overflow-wrap: anywhere;
+}
+
+/* Badge per status. `verified` is the only one that wants attention — it is the state
+   that means "a decision is owed". */
+.badge-verified {
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+
+.badge-accepted {
+  border-color: var(--ok-line);
+  color: var(--ok-ink);
+}
+
+.badge-rejected {
+  border-color: var(--danger-line);
+  color: var(--danger-ink);
+}
+
+.req-act {
+  display: flex;
+  gap: var(--sp-8);
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.admin-out {
+  margin-top: var(--sp-40);
+  padding-top: var(--sp-24);
+  border-top: 1px solid var(--line);
+}
+
+.login {
+  max-width: 22rem;
+}
+
+
+/* The released version in a group header. The node line links to its release tag; the
+   Epicbox protocol has no release page of its own, so it renders as plain text rather than
+   borrowing a link to the wrong artifact. Same weight either way, so the two headers read
+   as the same statement. */
+.rel,
+.rel-plain {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.rel {
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+}
+
+.rel:hover,
+.rel:focus-visible {
+  text-decoration-color: currentColor;
+}
+
+
+
+/* ------------------------------------------------------- admin: target records */
+
+.recs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+}
+
+.rec {
+  border-top: 1px solid var(--line);
+  padding: var(--sp-20) 0;
+}
+
+.rec:first-child {
+  border-top: 0;
+}
+
+/* A target that is no longer checked recedes but stays visible and editable: it is the
+   one record an admin needs to find in order to turn back on. */
+.rec-off {
+  opacity: 0.6;
+}
+
+.rec-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-12);
+}
+
+.rec-head b {
+  font-family: var(--font-mono);
+  font-size: var(--t-body);
+}
+
+.rec-head .badge {
+  margin-left: 0;
+}
+
+.rec-endpoint {
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  margin-left: auto;
+  overflow-wrap: anywhere;
+}
+
+.rec-grid {
+  display: grid;
+  gap: var(--sp-12);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 760px) {
+  .rec-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .rec-notes {
+    grid-column: 1 / -1;
+  }
+}
+
+.rec-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-16);
+  flex-wrap: wrap;
+  margin-top: var(--sp-12);
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+  font-size: var(--t-small);
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.check input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--mark);
+}
+
+/* What RDAP actually said, beside the fields that override it. A correction made without
+   the registry's answer in view is a guess about a guess. */
+.rec-reg {
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  margin-left: auto;
+}
+
+/* A placeholder here is the registry value showing through an empty override, so it has to
+   read as data rather than as a hint to ignore. */
+.rec-grid input::placeholder {
+  color: var(--ink-dim);
+  opacity: 0.75;
+}
+
+
+/* A verified host, marked with the tick alone.
+ *
+ * The word "verified" beside it was redundant with the mark and cost the host column real
+ * width on every vouched row — a double check already means this, and the title says who
+ * vouched for anyone who needs it spelled out. `role="img"` with an `aria-label` so the
+ * meaning is not carried by a tooltip alone, which a keyboard or screen reader never sees. */
+.verified-mark {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--sp-6);
+  vertical-align: -1px;
+  cursor: help;
+}
+
+
+
+/* ------------------------------------------------- admin: grouped record editor
+ *
+ * Fifteen editable records in one flat list is a scroll, not a tool. Each kind is a
+ * <details>, so the page opens as three headings and you expand the one you came for — and
+ * a group holding something abnormal opens itself, so nothing needing attention is hidden
+ * behind a closed disclosure.
+ */
+.recgroup {
+  border-top: 1px solid var(--line);
+}
+
+.recgroup > summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-12);
+  padding: var(--sp-12) 0;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 600;
+  list-style: none;
+}
+
+/* The default disclosure triangle is a platform glyph that differs on every OS and sits at
+   the wrong optical position. Drawn with borders instead, which also rotates cleanly. */
+.recgroup > summary::-webkit-details-marker {
+  display: none;
+}
+
+.recgroup > summary::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--ink-dim);
+  transition: transform var(--dur) var(--ease);
+  flex: none;
+}
+
+.recgroup[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.recgroup > summary:hover,
+.recgroup > summary:focus-visible {
+  color: var(--mark);
+}
+
+.recgroup-n {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  font-weight: 400;
+  color: var(--ink-dim);
+}
+
+.recgroup .recs {
+  padding-bottom: var(--sp-16);
+}
+
+/* Removal, kept visually separate from Save and stated plainly. It cascades into `checks`
+   and `rollup_hourly`, so it destroys measurement history that nothing can rebuild — the
+   reversible alternative is unticking Checked, and the copy says so at the point of
+   action rather than in a confirmation nobody reads. */
+.rec-danger {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  flex-wrap: wrap;
+  margin-top: var(--sp-12);
+  padding-top: var(--sp-12);
+  border-top: 1px dashed var(--line);
+}
+
+.rec-danger span {
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+  flex: 1 1 18rem;
+}
+
+.btn-danger {
+  border-color: var(--danger-line);
+  color: var(--danger-ink);
+}
+
+.btn-danger:hover,
+.btn-danger:focus-visible {
+  border-color: var(--danger-dot);
+}
+
+.check small {
+  color: var(--ink-dim);
+  opacity: 0.8;
+}
+
+
+/* The chain mark beside the CHAIN TIP label. Sized to the label's cap height and dimmed to
+   the label's colour, so it reads as part of the word rather than as an icon parked next to
+   it. */
+.fact dt {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+}
+
+.dt-mark {
+  flex: none;
+  opacity: 0.75;
+}
+
+
+
+/* ===========================================================================
+ * Admin: live saving
+ *
+ * Every control writes one field and reports in place. Nothing here reloads, so the styling
+ * has to carry what a page reload used to: that something is being saved, that it saved, and
+ * that a row is gone.
+ * ======================================================================== */
+
+/* ---- the single toast ----
+ *
+ * One element, reused. Rapid changes replace its text rather than stacking, because a column
+ * of five "Saved" cards is noise about something that went right. It sits bottom-left rather
+ * than centre so it never covers the field just edited, and it is `position: fixed` so a long
+ * record list does not scroll it away.
+ */
+.toast {
+  position: fixed;
+  left: var(--sp-16);
+  bottom: var(--sp-16);
+  z-index: 40;
+  margin: 0;
+  max-width: min(32rem, calc(100vw - 2rem));
+  padding: var(--sp-12) var(--sp-16);
+  border: 1px solid var(--ok-line);
+  border-radius: 8px;
+  background: var(--s2);
+  color: var(--ink);
+  font-size: var(--t-small);
+  box-shadow: 0 6px 20px -8px rgba(0, 0, 0, 0.5);
+  /* Out of the layout and out of the accessibility tree until it says something. */
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition:
+    opacity var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+
+.toast[data-open] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toast[data-tone='warn'] {
+  border-color: var(--warn-line);
+}
+
+.toast[data-tone='bad'] {
+  border-color: var(--danger-line);
+  color: var(--danger-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    transition: opacity var(--dur) linear;
+    transform: none;
+  }
+}
+
+/* ---- per-field state ----
+ *
+ * The toast says what happened; the field says which one. Both are needed: after four edits
+ * the toast names only the last, and the eye wants confirmation where it was looking.
+ */
+input[data-state='dirty'] {
+  border-color: var(--line-strong);
+}
+
+input[data-state='saving'] {
+  border-color: var(--warn-line);
+}
+
+/* Tinted, not ticked. An icon inside the field would shift the text; the border and a brief
+   wash of the surface say the same thing without moving anything. */
+input[data-state='saved'] {
+  border-color: var(--ok-line);
+  background: var(--ok-bg);
+  transition: background 600ms var(--ease);
+}
+
+input[data-state='failed'] {
+  border-color: var(--danger-line);
+  background: var(--danger-bg);
+}
+
+/* ---- tags that act ----
+ *
+ * These looked interactive and were not. Now they are buttons: same size as the badges beside
+ * them, with the affordances a control owes — hover, focus ring, pressed state.
+ */
+.badge-tag {
+  font: inherit;
+  font-size: var(--t-micro);
+  font-family: var(--font-ui);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  background: none;
+  transition:
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.badge-tag:hover {
+  border-color: var(--mark);
+  color: var(--ink);
+}
+
+.badge-tag[aria-busy='true'] {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+/* ---- two-step removal ----
+ *
+ * The ask and the answer occupy the same row, so confirming does not move the page. A modal
+ * would have trapped focus and scrolled, which is what this rewrite removes.
+ */
+.rec-danger-ask {
+  display: none;
+  align-items: center;
+  gap: var(--sp-8);
+  flex-wrap: wrap;
+}
+
+.rec-danger-ask b {
+  font-size: var(--t-small);
+  color: var(--danger-ink);
+  font-weight: 500;
+}
+
+[data-confirming] .rec-danger-note,
+[data-confirming] [data-remove] {
+  display: none;
+}
+
+[data-confirming] .rec-danger-ask {
+  display: flex;
+}
+
+[data-confirming] .rec-danger {
+  border-top-style: solid;
+  border-top-color: var(--danger-line);
+}
+
+/* The row collapses where it sits instead of the page re-rendering, so scroll position and
+   every other open field survive. */
+.rec[data-removed] {
+  opacity: 0;
+  transform: translateX(-8px);
+  transition:
+    opacity 240ms var(--ease),
+    transform 240ms var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rec[data-removed] {
+    transition: none;
+  }
+}
+
+
+
+/* ---- the double check on a verified badge ----
+ *
+ * Drawn, not typed. ✓✓ is exactly the codepoint that renders as a fallback box on a minimal
+ * font set, which is why every icon here is an inline path. Green only on this mark: the badge
+ * text stays neutral, so the tick is the thing the eye catches rather than a second coloured
+ * word competing with the fault colours in the table.
+ */
+.badge-verified-host {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.tick {
+  flex: none;
+  color: var(--ok-ink);
+}
+
+/* In the dashboard the tag is a control, so the tick inherits the button's colour on hover
+   rather than staying green against a changed border. */
+.badge-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.badge-tag .tick {
+  color: var(--ok-ink);
+}
+
+.badge-tag:hover .tick {
+  color: inherit;
+}
+
+/* ---- inspectable recent-checks bars ----
+ *
+ * Each bar carries its own time, outcome and latency in a `title`. The hover state has to be
+ * visible on a strip of 3px bars, so it grows slightly and lifts rather than changing colour —
+ * colour here means pass or fail and must not also mean "pointed at".
+ *
+ * `tabindex="0"` is on the bars in markup, so the same information is reachable by keyboard.
+ * That needs a real focus ring, because a 3px element with a default outline is invisible.
+ */
+.spark i {
+  transition:
+    transform var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
+  cursor: help;
+}
+
+.spark i:hover,
+.spark i:focus-visible {
+  transform: scaleY(1.45);
+  opacity: 1;
+  outline: none;
+}
+
+.spark i:focus-visible {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--mark);
+}
+
+/* Dim the rest of the strip while one bar is pointed at, so the one under the cursor is
+   unambiguous on a row of thirty. Cheaper than a tooltip and it cannot be clipped. */
+.spark:hover i:not(:hover) {
+  opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spark i {
+    transition: none;
+  }
+  .spark i:hover,
+  .spark i:focus-visible {
+    transform: none;
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--mark);
+  }
+}
+
+/* On a touch screen there is no hover, so the bars need to be big enough to hit. `pointer:
+   coarse` rather than a width breakpoint: a tablet with a mouse should keep the fine target. */
+@media (pointer: coarse) {
+  .spark {
+    gap: 3px;
+  }
+
+  .spark i {
+    min-width: 6px;
+  }
+}
+
+/* ---- queue actions ---- */
+
+.req-acts {
+  display: flex;
+  gap: var(--sp-8);
+  align-items: center;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+}
+
+/* Delete is not reject, and it should not look like the primary path out of the queue. */
+.btn-quiet {
+  border-color: var(--line);
+  color: var(--ink-dim);
+}
+
+.btn-quiet:hover,
+.btn-quiet:focus-visible {
+  border-color: var(--danger-line);
+  color: var(--danger-ink);
+}
+
+.req[data-removed] {
+  opacity: 0;
+  transform: translateX(-8px);
+  transition:
+    opacity 240ms var(--ease),
+    transform 240ms var(--ease);
+}
+
+
+
+/* ---- the chain tip, rolling ----
+ *
+ * An odometer window per character: one line tall, clipped, with the outgoing digit leaving
+ * through the top as the incoming one arrives from the bottom. Only the characters that
+ * changed move, which for a block height ticking up by one is a digit or two out of ten.
+ *
+ * `line-height` here has to match the value's own, or the translate overshoots by the
+ * difference and the digits land off the baseline. Both are 1.1 and that is not a coincidence
+ * to be tidied away.
+ */
+.fact-lead dd {
+  line-height: 1.1;
+}
+
+.odo-c {
+  display: inline-block;
+  overflow: hidden;
+  height: 1.1em;
+  line-height: 1.1;
+  vertical-align: bottom;
+  /* Tabular figures are already on the parent, but a comma is narrower than a digit and each
+     window sizes to its own glyph — which is what keeps the group separators tight instead of
+     padding them to a digit's width. */
+}
+
+.odo-col {
+  display: block;
+}
+
+.odo-col i {
+  display: block;
+  font-style: normal;
+  line-height: 1.1;
+}
+
+
+
+/* ===========================================================================
+   Expanded row
+   ---------------------------------------------------------------------------
+   One row at a time, opened by clicking anywhere on it, holding the half of the
+   record that does not belong in a table: the endpoint a reader wants to paste
+   into a wallet, where the box is, and a button that measures the host from the
+   reader's own browser instead of from this server.
+
+   Two rules it is built around. It must cost nothing when closed — no borders,
+   no tint, no reserved height, one chevron — because forty rows each announcing
+   that they can be opened is louder than the faults the page exists to show.
+   And every pair inside is conditional in the template, so the panel is short
+   on a bare target and longer on a well-described one rather than being a fixed
+   grid of em dashes.
+   =========================================================================== */
+
+/* No visible chevron.
+ *
+ * It had one job — say that a row opens — and in the place it had to sit, hard against a
+ * right-aligned state word and vertically between that word and the line under it, it read
+ * as punctuation attached to "Online" instead. A caret that has to be explained is worse
+ * than no caret: the cursor and the hover tint already say the row is a control, and once
+ * it is open the panel says so louder than any glyph could.
+ *
+ * The button stays in the markup, because it is what carries `aria-expanded` and
+ * `aria-controls` and it is what a keyboard reaches. It is visually hidden until focused,
+ * and absolutely positioned so revealing it cannot reflow the row it sits in. */
+.row-toggle {
+  position: absolute;
+  right: var(--sp-8);
+  top: var(--sp-8);
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-dim);
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.row-toggle:focus-visible {
+  width: 1.5rem;
+  height: 1.5rem;
+  clip-path: none;
+  overflow: visible;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: var(--s3);
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.row-toggle .chev {
+  transition: transform var(--dur) var(--ease);
+}
+
+.row-toggle[aria-expanded='true'] .chev {
+  transform: rotate(180deg);
+}
+
+/* The whole row is the target, so the whole row says so. No hover transform and no
+   border: a background one step up from the page is the quietest possible statement
+   that something will happen, and it does not move the text. */
+.rows > .row {
+  position: relative;
+  cursor: pointer;
+}
+
+.rows > .row:hover {
+  background: var(--stripe);
+}
+
+.rows > .row.is-open {
+  background: var(--s2);
+}
+
+/* The panel. `hidden` while closed, so its content is out of the tab order and out of
+   the accessibility tree rather than merely invisible; the class is what animates, and
+   JavaScript sets them in the right order. Height is transitioned as `grid-template-rows`
+   0fr → 1fr, which needs no measured pixel value and therefore cannot disagree with the
+   content's real height the way a max-height does. */
+.detail {
+  grid-area: det;
+  display: grid;
+  grid-template-rows: 0fr;
+  background: var(--s2);
+  border-top: 1px solid var(--line);
+  transition: grid-template-rows var(--dur) var(--ease);
+}
+
+.detail.is-open {
+  grid-template-rows: 1fr;
+}
+
+.detail > .detail-in {
+  /* Both required: a grid item's default `min-height: auto` refuses to shrink below its
+     content, which would make the 0fr row the full height of the panel. */
+  min-height: 0;
+  overflow: hidden;
+}
+
+.detail[hidden] {
+  display: none;
+}
+
+/* Inner padding lives on a child of .detail-in rather than on .detail-in itself, because
+   padding on the animated element is not collapsed by the 0fr row and leaves a visible
+   sliver of tinted background on every closed row. */
+.detail-in > * {
+  padding: var(--sp-12) 0 var(--sp-16);
+}
+
+.d-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--sp-12) var(--sp-24);
+}
+
+/* The endpoint and any note are sentences, not values, and wrapping them into a 9rem
+   column reads as a mistake. */
+.d-facts .d-wide {
+  grid-column: 1 / -1;
+}
+
+/* A URL is one token a reader will select and copy, so it gets two tracks rather than
+   breaking mid-hostname. At one track `https://node.epiccash.com:3413` wrapped after the
+   `341`, which is a value nobody can read and nobody can copy correctly by eye. On a phone
+   the grid has two tracks, so the same rule gives it the full width — no media query. */
+.d-facts .d-url {
+  grid-column: span 2;
+}
+
+/* A shorter token: one track is enough on a desktop, where two would push a whole row of
+   facts down for no gain. On a phone the grid is two tracks wide, so `span 2` is the full
+   width and the override below simply does not apply. */
+.d-facts .d-tok {
+  grid-column: span 2;
+}
+
+.d-facts dt {
+  font-size: var(--t-micro);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin-bottom: var(--sp-4);
+}
+
+.d-facts dd {
+  margin: 0;
+  font-size: var(--t-small);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.d-facts dd code {
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  color: var(--code-ink);
+  background: var(--code-bg);
+  padding: var(--sp-2) var(--sp-6);
+  border-radius: 3px;
+  overflow-wrap: anywhere;
+}
+
+/* The live half, on its own line under the facts. */
+.d-probe {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  flex-wrap: wrap;
+  border-top: 1px solid var(--line);
+  padding-top: var(--sp-16);
+}
+
+/* Four words, because the number this button produces is not the number in the row beside
+   it and a reader deserves to know which is which before pressing it — and because a
+   request from their machine is visible to that operator. Said once, here, rather than in
+   a paragraph. */
+.d-note {
+  font-size: var(--t-micro);
+  color: var(--ink-dim);
+}
+
+.d-go {
+  appearance: none;
+  font-family: var(--font-ui);
+  font-size: var(--t-small);
+  color: var(--ink);
+  background: var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  padding: 0 var(--sp-12);
+  height: var(--ctl-md);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.d-go:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.d-go:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.d-go[disabled] {
+  cursor: default;
+  color: var(--ink-dim);
+  border-color: var(--line);
+}
+
+/* <output> is inline by default and empty until the button is pressed, so it occupies no
+   space and moves nothing when it fills. */
+.d-out {
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.d-out b {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.d-out .d-ok {
+  color: var(--ok-ink);
+}
+
+.d-out .d-bad {
+  color: var(--danger-ink);
+}
+
+/* One unit of separation between figures, so `41 ms · height 3,722,061` reads as three
+   facts rather than one string. */
+.d-out i {
+  font-style: normal;
+  color: var(--line-strong);
+  padding: 0 var(--sp-4);
+}
+
+@media (min-width: 900px) {
+  /* Placed by line rather than by area name: with subgrid the row declares
+     `grid-template-areas: none`, so `det` resolves to nothing and the panel would
+     auto-place into a single column. Two classes, so this beats the base rule whatever
+     the source order. */
+  .row > .detail {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    /* Out through the row's own 16px padding, so the hairline above the panel runs the
+       full width of the table rather than floating inside it. */
+    margin: 0 calc(-1 * var(--sp-16));
+  }
+
+  /* The panel indents to the host column, so its left edge lines up with the hostname it
+     belongs to rather than with the traffic light. */
+  .detail-in > * {
+    padding-left: var(--sp-40);
+    padding-right: var(--sp-16);
+  }
+
+  .d-facts {
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 15rem));
+  }
+
+  .d-facts .d-tok {
+    grid-column: auto;
+  }
+
+  /* Pushed to the far edge only where there is room for it. On a phone `margin-left: auto`
+     wins against wrapping and the last word runs off the screen instead. */
+  .d-note {
+    margin-left: auto;
+  }
+}
+
+
+/* ---- the vendored icon set ----
+ *
+ * Lucide, inlined so a mark can inherit the colour of the text beside it. One rule for all of
+ * them, because taking a set is pointless if each use then overrides its weight. */
+.icon {
+  flex: none;
+  vertical-align: -2px;
+}
+
+/* The chain-tip mark sits beside an 11px uppercase label, so it is dimmed to the label's weight
+   rather than competing with the number underneath. */
+.dt-mark,
+.icon-boxes {
+  flex: none;
+  opacity: 0.8;
+}
+
+.verified-mark .icon-check {
+  color: var(--ok-ink);
+}
+
+/* ---- the recent-checks strip is desktop-only ----
+ *
+ * On a phone it was the worst thing on the page: a full-width band of thirty bars under every
+ * host, which pushed each card to a dozen lines and said less than the 1h and 24h figures
+ * directly above it. The strip earns its place in the table, where it sits in a column and
+ * costs nothing vertically; in a card it is a decoration with a line count.
+ *
+ * `display: none` rather than clipping the bar count: half a strip is a graph with its end cut
+ * off, which is worse than no graph. The same information is a tap away in the row detail. */
+@media (max-width: 899px) {
+  .row-spark {
+    display: none;
+  }
 }

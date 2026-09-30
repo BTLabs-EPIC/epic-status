@@ -57,6 +57,16 @@ Environment="EPIC_STATUS_SITE_NAME=Epic Cash Status"
 # in the same database rather than a schema migration.
 Environment=EPIC_STATUS_PROBER_ID=btlabs-lon
 
+# Secrets live outside the unit, because this file is in git. The review dashboard's
+# password hash goes in /etc/epic-status.env, root-owned and 0600. The leading `-` makes it
+# optional: with no file and no hash, /admin is not registered and the service starts
+# normally as a read-only public board.
+#
+#   epic-status admin-password        # prints the hash and a one-time password
+#   printf 'EPIC_STATUS_ADMIN_USER=admin\nEPIC_STATUS_ADMIN_PASSWORD_HASH=...\n' \
+#     | sudo tee /etc/epic-status.env >/dev/null
+#   sudo chmod 600 /etc/epic-status.env && sudo systemctl restart epic-status
+EnvironmentFile=-/etc/epic-status.env
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 

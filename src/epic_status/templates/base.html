@@ -3,15 +3,22 @@
   script in app.js before first paint so there is no flash of the wrong mode.
 #}
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="dark" data-epicbox-protocol="{{ epicbox_protocol }}" data-cert-warn-days="{{ cert_warn_days }}" data-chain="{{ chain.value }}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{% block title %}{{ site_name }}{% endblock %}</title>
+    {#
+      The title and the icon are the same judgement twice: "Epic Cash Status — Degraded"
+      next to an amber tile. Both come from `verdict.tone`, so a tab can never show a
+      state the page disagrees with. Sub-pages override the title with their own section
+      name; the icon is state-coloured everywhere, which is the point — the reader who is
+      on /history still wants to know the chain fell over.
+    #}
+    <title>{% block title %}{{ site_name }} — {{ status_word }}{% endblock %}</title>
     <meta name="description" content="Live health and uptime for Epic Cash public nodes and Epicbox relays." />
     <meta name="color-scheme" content="dark light" />
-    <link rel="stylesheet" href="/static/app.css" />
-    <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_v }}" />
+    <link rel="icon" href="/static/{{ status_icon }}" type="image/svg+xml" />
   </head>
   <body>
     <a class="sr-only" href="#main">Skip to content</a>
@@ -19,16 +26,51 @@
     <header class="topbar">
       <div class="topbar-in">
         <a class="brand" href="/">
-          <span class="brand-mark" aria-hidden="true">E</span>
+          {# The same file the tab is showing, so the header mark and the favicon can
+             never disagree about the state. The glyph lives inside the SVG, which is why
+             there is no longer a letter here and no gradient in the CSS. #}
+          <img class="brand-mark" src="/static/{{ status_icon }}" alt="" width="28" height="28" />
           {{ site_name }}
         </a>
+
+        {#
+          The network switch. Rendered only when this instance monitors more than one
+          chain: a segmented control with a single segment is a label dressed up as a
+          choice, and every install that has never heard of floonet should look exactly
+          as it did before.
+
+          Placed next to the brand rather than inside `.topnav`, and that is not
+          decoration. `.topnav` is `overflow-x: auto` because "Request a server" already
+          pushes it to scrolling at 390px — putting the switch in there would let the
+          thing that decides *what the whole page is about* scroll out of sight. It is
+          also a different kind of control from the links beside it: those change which
+          view you get, this changes which network the view describes.
+
+          Links, not a <select> or buttons: shareable, bookmarkable, and they work with
+          JavaScript off. `aria-current="page"` marks the active one, which is what the
+          section links already use, and the group carries its own label because "Mainnet
+          / Floonet" means nothing to a screen reader arriving cold.
+        #}
+        {% if chains | length > 1 %}
+        <nav class="chainsel" aria-label="Network">
+          {% for link in chain_links %}
+          <a href="{{ link.href }}"{% if link.current %} aria-current="page"{% endif %}>{{ link.label }}</a>
+          {% endfor %}
+        </nav>
+        {% endif %}
+
         <nav class="topnav" aria-label="Sections">
-          <a href="/"{% if page == 'board' %} aria-current="page"{% endif %}>Status</a>
-          <a href="/history"{% if page == 'history' %} aria-current="page"{% endif %}>History</a>
+          {# Both carry the selected network, so switching section does not silently
+             switch chain: clicking History from the floonet board must show floonet's
+             history, not mainnet's. `chain_query` is empty on mainnet. #}
+          <a href="/{{ chain_query }}"{% if page == 'board' %} aria-current="page"{% endif %}>Status</a>
+          <a href="/history{{ chain_query }}"{% if page == 'history' %} aria-current="page"{% endif %}>History</a>
           {% if submissions_enabled %}
-          <a href="/add"{% if page == 'add' %} aria-current="page"{% endif %}>Add a server</a>
+          {# No chain on this one: the form only accepts mainnet submissions, so carrying
+             floonet here would promise something the page does not do. #}
+          <a href="/add"{% if page == 'add' %} aria-current="page"{% endif %}>Request a server</a>
           {% endif %}
-          <a href="/api/v1/status.json">API</a>
+          <a href="/api"{% if page == 'api' %} aria-current="page"{% endif %}>API</a>
           <button
             type="button"
             class="theme-toggle"
@@ -56,27 +98,26 @@
     <footer class="foot">
       <div class="shell">
         {% block footer_extra %}{% endblock %}
-        <p>
-          Checks run from one vantage point, <code>{{ prober_id }}</code>{% if prober_region != 'unknown' %}
-          in {{ prober_region }}{% endif %}. Latency shown is the round trip from there and is a
-          statement about that host's network as much as about the server being checked.
-          Nodes are checked every {{ cadence_s }}s and Epicbox relays every {{ epicbox_cadence_s }}s.
-        </p>
-        <p>
-          Peer counts and sync status are not published by a node without credentials, so they
-          are not shown per server — no status page can obtain them remotely.
-          Locations come from registry records and are a guess for hosts behind a proxy.
-        </p>
-        <p>
-          Nothing here is probed when you load the page: one checker writes the data and every
-          visitor reads the same cached copy.
-          <a href="/api/v1/status.json">JSON API</a> ·
-          <a href="/api/docs">API docs</a> ·
-          open source, self-hostable.
-        </p>
+        <div class="foot-row">
+          <span>Created by btlabs for Epic Cash.</span>
+          <nav class="foot-nav" aria-label="Elsewhere">
+            <a href="/api">API</a>
+            <a href="/api/v1/status.json">status.json</a>
+            <a href="https://github.com/blacktyg3r/epic-status">Source</a>
+          </nav>
+        </div>
       </div>
     </footer>
 
-    <script src="/static/app.js" defer></script>
+    {# `?v=` is a content hash of the stylesheet and the script. `/static/` is served with
+       an ETag but no Cache-Control, so a browser is free to reuse a previously fetched
+       script without revalidating — and a script from before the network switch existed
+       polls mainnet's status.json regardless of which chain the page is showing, then
+       writes mainnet's tip into a floonet board. A versioned URL makes a deploy
+       impossible to half-apply. See render.asset_version. #}
+    <script src="/static/app.js?v={{ asset_v }}" defer></script>
+    {# Page-specific scripts. Only /admin has one, and it has no business loading on the
+       public board. #}
+    {% block scripts %}{% endblock %}
   </body>
 </html>

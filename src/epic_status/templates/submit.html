@@ -1,16 +1,11 @@
 {% extends "base.html" %}
 {% set page = 'add' %}
-{% block title %}Add a server — {{ site_name }}{% endblock %}
+{% block title %}Request a server — {{ site_name }}{% endblock %}
 
 {% block content %}
 <div class="page-head">
-  <h1>Add a public node or Epicbox relay</h1>
-  <p>
-    Submit it and it gets checked. If it answers {{ probes_required }} times,
-    {{ probe_interval_s }} seconds apart, it appears on the board — no review queue, nobody
-    to wait for. If it later stops answering for good and never once worked, it removes
-    itself.
-  </p>
+  <h1>Request a server</h1>
+  <p>Reviewed before it appears on the board.</p>
 </div>
 
 {% if message %}
@@ -27,6 +22,7 @@
     <select name="kind">
       <option value="node">Public node</option>
       <option value="epicbox">Epicbox relay</option>
+      <option value="pool">Mining pool</option>
     </select>
   </label>
 
@@ -41,83 +37,34 @@
       spellcheck="false"
       required
     />
-    <small>
-      A hostname, a host and port, or a full URL. With no port, a node is assumed to be
-      behind a reverse proxy on 443 — which is the better way to run one, since the node's
-      own listener can then stay on loopback.
-    </small>
+  </label>
+
+  {#
+    Optional, and only the countries the board can actually draw a flag for — offering one it
+    would render as a two-letter chip invites a choice the page cannot honour. A submitter
+    knows where their own server is; RDAP frequently does not, and this is the cheapest place
+    to capture it. It is a hint, not authority: it lands as the hand-set override an admin can
+    change or clear.
+  #}
+  <label class="field">
+    <span>Country <small>optional</small></span>
+    <select name="country" id="country-select">
+      <option value="">Not sure</option>
+      {% for code, name in countries %}
+      <option value="{{ code }}">{{ name }}</option>
+      {% endfor %}
+    </select>
   </label>
 
   <label class="field">
     <span>Operator <small>optional</small></span>
     <input type="text" name="operator" placeholder="Example Pool" autocomplete="off" maxlength="64" />
-    <small>Shown next to the host so you get the credit.</small>
   </label>
 
-  <button class="btn btn-primary" type="submit">Submit for checking</button>
+  <button class="btn btn-primary" type="submit">Send request</button>
 </form>
+
 {% else %}
-<p class="notice notice-info">Submissions are closed on this instance.</p>
+<p class="notice notice-info">This instance is not accepting submissions.</p>
 {% endif %}
-
-<div class="prose">
-  <h2>What gets checked</h2>
-  <ul class="checklist">
-    <li><span class="mark">1</span><span>The host parses and is not already listed.</span></li>
-    <li>
-      <span class="mark">2</span>
-      <span>
-        It resolves to a public address. Private, loopback, link-local and reserved ranges
-        are refused — otherwise this form would be a port scanner pointed at whatever
-        somebody types.
-      </span>
-    </li>
-    <li>
-      <span class="mark">3</span>
-      <span>
-        For a node: <code>get_tip</code> answers without credentials, and the height is
-        close enough to the rest of the network to be this chain. The network is detected
-        from the tip, not taken from your word for it.
-      </span>
-    </li>
-    <li>
-      <span class="mark">4</span>
-      <span>
-        For a relay: the WebSocket handshake completes and the relay sends its
-        <code>Challenge</code> frame. Nothing is written to your server and no address is
-        subscribed.
-      </span>
-    </li>
-    <li>
-      <span class="mark">5</span>
-      <span>
-        {{ probes_required }} successful checks, {{ probe_interval_s }}s apart. One success
-        is luck.
-      </span>
-    </li>
-  </ul>
-
-  <h2>One rule that will surprise you</h2>
-  <p>
-    An Epicbox hostname may contain only letters, digits and dots. A hyphen or an
-    underscore is rejected here, and it is not pedantry: a hyphenated relay completes the
-    handshake perfectly and would show green, while no wallet can parse an address on it,
-    so no transaction could ever complete. Listing it would publish a permanently broken
-    endpoint as healthy.
-  </p>
-
-  <h2>From a terminal</h2>
-  <p>Which is how most operators will actually do it.</p>
-  <pre>curl -X POST {{ site_url }}/api/v1/submit \
-  -d kind=node \
-  -d host=node.example.org:3413 \
-  -d operator="Example Pool"</pre>
-
-  <h2>What is stored about you</h2>
-  <p>
-    A salted hash of your IP address, used only to stop one person flooding the queue. The
-    salt is generated when the service starts and never written down, so the hashes cannot
-    be reversed or linked across restarts even by whoever runs this instance.
-  </p>
-</div>
 {% endblock %}
