@@ -4540,3 +4540,53 @@ input[data-state='failed'] {
     row-gap: 0;
   }
 }
+
+/* ---------------------------------------------------- the console at 900-1079px
+ *
+ * The ten tracks need about 960px with the shell's padding, and the table switches on at
+ * 900, so between the two the State column was pushed past the table's right edge and
+ * clipped by its rounded border — "Online" cut to "Onlin" on a small laptop or a tablet in
+ * landscape. Measured, not inferred: at 900px the state cell ended 41px outside the table.
+ *
+ * Two things give way in this range, both of which return at 1080px: the latency bar (the
+ * number stays) and the recent-checks strip (24h and 1h uptime stay beside it). Losing
+ * either costs a glance; losing the state word, or a hostname broken after ".co", costs
+ * the answer.
+ *
+ * The strip's track is kept at 1rem rather than removed: every row subgrids onto these ten
+ * tracks by line number, and 1rem is exactly the column gap the subgrid takes back out of
+ * it, so the cell is zero wide and nothing else has to be renumbered. */
+@media (min-width: 900px) and (max-width: 1079px) {
+  .rows {
+    grid-template-columns:
+      auto minmax(9rem, 1fr) 6.5rem 7.25rem 4rem 5rem 5.5rem 4rem
+      1rem 5.5rem;
+  }
+
+  @supports not (grid-template-columns: subgrid) {
+    .row,
+    .row-head {
+      grid-template-columns:
+        auto minmax(9rem, 1fr) 6.5rem 7.25rem 4rem 5rem 5.5rem 4rem
+        1rem 5.5rem;
+    }
+  }
+
+  .lat-bar {
+    display: none;
+  }
+
+  /* `nowrap` as well: a hidden label still takes its height, and in a zero-wide cell
+     "Recent checks" wrapped a word per line and doubled the header band. */
+  .row-spark,
+  .h-spark {
+    visibility: hidden;
+    overflow: hidden;
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .row-spark .spark i {
+    display: none;
+  }
+}
