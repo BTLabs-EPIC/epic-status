@@ -37,11 +37,11 @@ from __future__ import annotations
 from typing import Final
 
 #: Current released node version. Compared against what each node reports.
-NODE: Final = "4.0.4"
+NODE: Final = "4.1.0"
 
 #: Current released wallet version. Not probed — shown so the board can answer
 #: "what should I be running" without sending the reader elsewhere.
-WALLET: Final = "4.0.0"
+WALLET: Final = "4.1.0"
 
 #: Epicbox protocol version the relays should be speaking. Relays report their own
 #: protocol version in the handshake, so this is comparable in the same way.
