@@ -498,3 +498,37 @@ def test_events_columns_match_the_schema(tmp_path: Path) -> None:
         assert {"event_id", "started_at", "ended_at", "detail"} <= occ
     finally:
         db.close()
+
+
+
+def test_compaction_closes_a_stale_open_row_at_the_next_ones_start(tmp_path: Path) -> None:
+    """An older version could leave a row open and then open another for the same key.
+    Folded together, the earlier one is closed where the next began, so its occurrence
+    cannot read as never ending once the aggregate is closed."""
+    path = tmp_path / "stale.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(OLD_SCHEMA + OLD_EVENTS)
+    conn.execute(
+        "INSERT INTO targets (id, kind, slug, endpoint, display_host, source)"
+        " VALUES (7,'node','pool.example.org','https://pool.example.org','pool.example.org','seed')"
+    )
+    for row in [
+        (1, "mainnet", "down", "warn", 7, "pool.example.org", None, "2026-10-13T07:00:00Z", None),
+        (2, "mainnet", "down", "warn", 7, "pool.example.org", None, "2026-10-13T08:00:00Z", "2026-10-13T08:05:00Z"),
+    ]:
+        conn.execute(
+            "INSERT INTO events (id, chain, kind, severity, target_id, subject, depth,"
+            " prober_id, started_at, ended_at, detail) VALUES (?,?,?,?,?,?,?,'test',?,?,'x')",
+            row,
+        )
+    conn.commit()
+    conn.close()
+    Database(path, prober_id="test").close()
+    occ = _occurrences(path)
+    assert [o[1:3] for o in occ] == [
+        ("2026-10-13T07:00:00Z", "2026-10-13T08:00:00Z"),
+        ("2026-10-13T08:00:00Z", "2026-10-13T08:05:00Z"),
+    ]
+    agg = _events(path)
+    assert len(agg) == 1 and agg[0][6] == "2026-10-13T08:05:00Z"
+    assert agg[0][7] == 3600 + 300

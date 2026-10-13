@@ -386,9 +386,12 @@ primitive by construction. Three separate protections, because each alone has a 
 development. On a reachable instance it turns the form into a port scanner aimed at
 your own network.
 
-**Bind loopback and put a reverse proxy in front.** The rate limit trusts
-`x-forwarded-for`, which is only trustworthy when the service cannot be reached
-directly. If you must bind publicly, set `SUBMISSIONS_ENABLED=false`.
+**Bind loopback and put a reverse proxy in front.** The rate limits key on the
+proxy's statement of who connected: `x-real-ip` (set by the vhost to `$remote_addr`),
+or else the **last** `x-forwarded-for` entry — never the first, which nginx's
+`$proxy_add_x_forwarded_for` copies from the client. Both are only trustworthy when
+the service cannot be reached directly. If you must bind publicly, set
+`SUBMISSIONS_ENABLED=false` and `QUICKCHECK_ENABLED=false`.
 
 The application sets its own CSP, `referrer-policy: no-referrer` and
 `x-content-type-options`, so a self-hoster behind any proxy gets them. Templates are
@@ -423,8 +426,14 @@ it is fenced in `src/epic_status/quickcheck.py`:
   `<our IP>:5432` cannot reach what the firewall hides. If they cannot be read,
   typed ports are refused.
 - **Bounded.** 3 s per step, 9 s per check, a 64 KiB response cap, no compression.
-  Per visitor 5 checks a minute and 30 an hour (a salted hash of the address is kept,
-  in memory only); per target 10 a minute across all visitors; 4 at once in total.
+  Per visitor 5 checks a minute and 30 an hour (a salted hash of the address — an
+  IPv6 visitor's /64 — is kept, in memory only); per target 10 a minute across all
+  visitors; 4 at once in total.
+- **Its own resolver threads.** Two, used by nothing else, and counted until the
+  lookup really returns. A name under a nameserver that never answers holds its thread
+  for the resolver's whole retry cycle whatever timeout the check applies; on the event
+  loop's shared pool a handful of those would stall the poller's own probes and the
+  board would report outages that are not happening.
 - **Same-origin.** `POST /api/v1/check` sends no CORS headers, requires a JSON
   content type and refuses `sec-fetch-site: cross-site`. The board's own form posts to
   `POST /check`, which has to accept an ordinary form so it works with JavaScript off;

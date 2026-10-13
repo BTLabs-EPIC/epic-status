@@ -381,20 +381,28 @@ class Database:
                 for run in runs:
                     head, last = run[0], run[-1]
                     active = 0.0
-                    for row in run:
+                    for i, row in enumerate(run):
+                        # An open row followed by a later one of the same key was left
+                        # open by an older version — at most one can really be ongoing.
+                        # Closed at the next one's start, so it cannot read as never
+                        # ending once the aggregate is closed and `close_event` stops
+                        # looking at it.
+                        ended = row["ended_at"]
+                        if ended is None and i < len(run) - 1:
+                            ended = run[i + 1]["started_at"]
                         conn.execute(
                             "INSERT INTO event_occurrences (event_id, started_at, ended_at,"
                             " detail, severity, depth) VALUES (?,?,?,?,?,?)",
                             (
                                 head["id"],
                                 row["started_at"],
-                                row["ended_at"],
+                                ended,
                                 row["detail"],
                                 row["severity"],
                                 row["depth"],
                             ),
                         )
-                        active += _seconds_between(row["started_at"], row["ended_at"])
+                        active += _seconds_between(row["started_at"], ended)
                     depths = [r["depth"] for r in run if r["depth"] is not None]
                     conn.execute(
                         """

@@ -201,3 +201,49 @@ async def test_form_post_keeps_the_board_it_came_from(
     assert 'href="/?chain=floonet" aria-label="Close' in floo.text
     assert 'name="chain" value="floonet"' in floo.text
     assert odd.status_code == 200 and 'data-chain="mainnet"' in odd.text
+
+
+def test_client_address_is_the_proxys_word_not_the_visitors() -> None:
+    """nginx appends the real peer to a client-supplied X-Forwarded-For, so the first
+    entry is the visitor's to choose. X-Real-IP, then the last entry, are not."""
+    from epic_status.web import client_address
+
+    class Req:
+        def __init__(self, headers: dict[str, str]) -> None:
+            self.headers = headers
+            self.client = None
+
+    def addr(headers: dict[str, str]) -> str:
+        return client_address(Req(headers))  # type: ignore[arg-type]
+
+    forged = "6.6.6.6, 203.0.113.9"
+    assert addr({"x-real-ip": "203.0.113.9", "x-forwarded-for": forged}) == "203.0.113.9"
+    assert addr({"x-forwarded-for": forged}) == "203.0.113.9"
+    assert addr({"x-forwarded-for": "203.0.113.9"}) == "203.0.113.9"
+    assert addr({}) == "unknown"
+
+
+async def test_forged_forwarded_for_does_not_reset_the_limit(
+    tmp_path: Path, fake_dns: Any, fake_probes: list[Any]
+) -> None:
+    fake_dns({"node.example.org": [PUBLIC]})
+    async with client_for(app_for(tmp_path)) as client:
+        statuses = [
+            (await client.post(
+                "/check", data={"address": "node.example.org"},
+                headers={**FRAGMENT, "x-forwarded-for": f"6.6.6.{i}, 203.0.113.9",
+                         "x-real-ip": "203.0.113.9"},
+            )).status_code
+            for i in range(qc.CLIENT_PER_MINUTE + 1)
+        ]
+    assert statuses[-1] == 429
+
+
+def test_forwarded_host_is_not_trusted() -> None:
+    class Req:
+        def __init__(self, headers: dict[str, str]) -> None:
+            self.headers = headers
+
+    forged = {"origin": "https://evil.example", "host": "status.example.org",
+              "x-forwarded-host": "evil.example"}
+    assert not _same_origin_post(Req(forged))  # type: ignore[arg-type]

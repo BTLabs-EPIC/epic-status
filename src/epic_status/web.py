@@ -15,16 +15,26 @@ from fastapi.responses import JSONResponse, Response
 
 
 def client_address(request: Request) -> str:
-    """The submitter's address, for rate limiting only.
+    """The visitor's address, for rate limiting only.
 
-    `x-forwarded-for` is trusted because this service is designed to run behind a
-    reverse proxy on loopback and cannot be reached directly. If you bind it to a
-    public interface — which the settings tell you not to do — this becomes
-    spoofable and the rate limit becomes decorative.
+    The proxy's own statement of who connected to it, never the visitor's. nginx sets
+    `x-real-ip` to `$remote_addr`, replacing anything the client sent, so it is read
+    first. Failing that, the **last** `x-forwarded-for` entry: `$proxy_add_x_forwarded_for`
+    appends the real peer to whatever list the client supplied, so the first entry is
+    the client's to choose — and reading it, as this function once did, let anyone
+    reset the submit, login and quick-check limits by varying one header.
+
+    Both are trusted only because this service binds loopback behind a proxy. Bound to
+    a public interface — which the settings tell you not to do — they are spoofable.
     """
+    real = request.headers.get("x-real-ip", "").strip()
+    if real:
+        return real
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        last = forwarded.split(",")[-1].strip()
+        if last:
+            return last
     return request.client.host if request.client else "unknown"
 
 

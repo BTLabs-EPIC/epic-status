@@ -909,7 +909,7 @@ def _same_origin_post(request: Request) -> bool:
     origin = request.headers.get("origin")
     if origin is None or origin == "null":
         return origin is None
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    host = request.headers.get("host") or ""
     return origin.split("://", 1)[-1].rstrip("/") == host
 
 

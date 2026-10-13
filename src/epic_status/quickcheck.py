@@ -34,7 +34,9 @@ trigger either at will. So by default the peer port gets a TCP connect only.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import fcntl
+import functools
 import hashlib
 import ipaddress
 import json
@@ -42,6 +44,7 @@ import re
 import secrets
 import socket
 import struct
+import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping
@@ -56,7 +59,14 @@ from pydantic import BaseModel
 
 from .config import Settings
 from .models import Chain, Reason, Target
-from .net import Resolved, TargetRejected, _is_public, classify_http_error, resolve_endpoint
+from .net import (
+    Resolved,
+    TargetRejected,
+    _embedded_ipv4,
+    _is_public,
+    classify_http_error,
+    resolve_endpoint,
+)
 from .probes.node import BodyTooLarge, CappedResponse, EncodedBody, _rpc, _unwrap, post_capped
 
 # --------------------------------------------------------------------- constants
@@ -80,6 +90,12 @@ CLIENT_PER_HOUR = 30
 TARGET_PER_MINUTE = 10
 """Across all visitors, so this server cannot be used to hammer one node."""
 MAX_CONCURRENT = 4
+DNS_THREADS = 2
+"""Lookups the quick check may have in flight, each on a thread of its own private pool.
+
+Counted until the thread returns, not until the caller gives up: a name under a dead
+nameserver holds its thread for the resolver's full retry cycle, ten seconds or more,
+whatever timeout the check applied. When both are held the check answers busy."""
 BUSY_RETRY_S = 5
 MAX_TRACKED_KEYS = 10_000
 """Bound on limiter memory. A flood of distinct addresses evicts the oldest keys."""
@@ -503,7 +519,23 @@ class QuickCheckLimiter:
         self.active = 0
 
     def _key(self, client_ip: str) -> str:
-        return hashlib.sha256(f"{self._salt}:{client_ip}".encode()).hexdigest()[:32]
+        """One key per IPv4 address and per IPv6 /64.
+
+        A /64 is what one subscriber line is given, and every address in it is theirs to
+        use: keyed by full address, one visitor would have 2^64 separate allowances."""
+        try:
+            ip = ipaddress.ip_address(client_ip.split("%", 1)[0])
+        except ValueError:
+            who = client_ip
+        else:
+            mapped = ip.ipv4_mapped if isinstance(ip, ipaddress.IPv6Address) else None
+            if mapped is not None:
+                who = str(mapped)
+            elif isinstance(ip, ipaddress.IPv6Address):
+                who = str(ipaddress.ip_network(f"{ip}/64", strict=False))
+            else:
+                who = str(ip)
+        return hashlib.sha256(f"{self._salt}:{who}".encode()).hexdigest()[:32]
 
     def take_client(self, client_ip: str) -> int | None:
         """Count one check for this visitor; the retry delay if over the limit."""
@@ -1034,6 +1066,38 @@ class QuickChecker:
             settings.quickcheck_extra_self_addresses.split(",")
         )
         self._clients: tuple[httpx.AsyncClient, httpx.AsyncClient] | None = None
+        self._dns_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=DNS_THREADS, thread_name_prefix="quickcheck-dns"
+        )
+        # Released from the worker thread when the lookup really ends, so it is a
+        # threading primitive rather than an asyncio one.
+        self._dns_slots = threading.BoundedSemaphore(DNS_THREADS)
+
+    async def getaddrinfo(self, host: str, port: int) -> list[Any]:
+        """Resolve on this checker's own threads, never the event loop's shared pool.
+
+        Raises `DnsBusy` rather than queueing when every thread is still occupied, which
+        bounds what a run of unanswerable names can hold to `DNS_THREADS` threads that
+        nothing else on the server uses.
+        """
+        if not self._dns_slots.acquire(blocking=False):
+            raise DnsBusy
+        try:
+            future = self._dns_pool.submit(
+                functools.partial(
+                    socket.getaddrinfo,
+                    host,
+                    port,
+                    type=socket.SOCK_STREAM,
+                    proto=socket.IPPROTO_TCP,
+                )
+            )
+        except RuntimeError:  # pool shut down
+            self._dns_slots.release()
+            raise DnsBusy from None
+        future.add_done_callback(lambda _f: self._dns_slots.release())
+        result: list[Any] = await asyncio.wrap_future(future)
+        return result
 
     def clients(self) -> tuple[httpx.AsyncClient, httpx.AsyncClient]:
         if self._clients is None:
@@ -1045,6 +1109,12 @@ class QuickChecker:
             for client in self._clients:
                 await client.aclose()
             self._clients = None
+        # A stuck lookup must not hold up a restart.
+        self._dns_pool.shutdown(wait=False, cancel_futures=True)
+
+
+class DnsBusy(Exception):
+    """Every quick-check resolver thread is still occupied."""
 
 
 def _client(*, verify: bool) -> httpx.AsyncClient:
@@ -1130,7 +1200,10 @@ async def _checked(
             resolved = await resolve_endpoint(
                 f"{parsed.scheme or 'https'}://{parsed.url_host}:{probe_port}",
                 allow_private=settings.allow_private_targets,
+                getaddrinfo=checker.getaddrinfo,
             )
+    except DnsBusy:
+        return refuse("busy", "Several lookups are still running; try again in a few seconds.", BUSY_RETRY_S)
     except TimeoutError:
         return refuse("dns", f"Looking up {parsed.host} timed out.")
     except TargetRejected as exc:
@@ -1144,7 +1217,16 @@ async def _checked(
         if own is None:
             return refuse("blocked", "Custom ports cannot be checked right now; try the default ports.")
         for addr in resolved.addresses:
-            if _canonical(addr) in own and _is_public(ipaddress.ip_address(_canonical(addr))):
+            # Unwrapped first: [::ffff:<our IPv4>] and the NAT64 form reach the same
+            # IPv4 service on Linux, and whether `_is_public` refuses them outright
+            # depends on the Python release's `ipaddress` rules.
+            ip = ipaddress.ip_address(_canonical(addr))
+            forms = {str(ip)}
+            if isinstance(ip, ipaddress.IPv6Address):
+                inner = ip.ipv4_mapped or _embedded_ipv4(ip)
+                if inner is not None:
+                    forms.add(str(inner))
+            if forms & own:
                 return refuse(
                     "blocked",
                     "That address belongs to this server; only ports 3413 and 3414 are checked on it.",

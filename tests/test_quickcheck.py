@@ -98,6 +98,12 @@ def fake_dns(monkeypatch: pytest.MonkeyPatch) -> Callable[[dict[str, list[str]]]
 
         monkeypatch.setattr(loop, "getaddrinfo", getaddrinfo)
 
+        # The quick check resolves on its own thread pool, not the loop's.
+        async def checker_getaddrinfo(_self: Any, host: str, port: int) -> list[Any]:
+            return await getaddrinfo(host, port)
+
+        monkeypatch.setattr(qc.QuickChecker, "getaddrinfo", checker_getaddrinfo)
+
     return install
 
 
@@ -1108,3 +1114,88 @@ async def test_api_over_a_real_socket_reports_the_connected_peer(
         await server.wait_closed()
     assert result.ok and result.height == 7 and result.network == "mainnet"
     assert seen and all(peer == "127.0.0.1" for peer in seen)
+
+
+# ------------------------------------------------- review fixes: DNS pool, keys, hairpin
+
+
+async def test_lookups_use_a_private_pool_and_never_the_loops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_probes: list[Any]
+) -> None:
+    """A name under a dead nameserver holds a resolver thread long after the check gives
+    up. Those threads must be the quick check's own, so the poller's lookups and every
+    httpx connect — which share the loop's default pool — never queue behind them."""
+    import threading
+
+    release = threading.Event()
+    seen_threads: list[str] = []
+
+    real = socket.getaddrinfo
+
+    def slow_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> list[Any]:
+        # `socket` is one module, so this also sees the loop's own lookups; only the
+        # attacker's names hang.
+        if isinstance(host, str) and host.endswith(".slow.example"):
+            seen_threads.append(threading.current_thread().name)
+            release.wait(5)
+            raise socket.gaierror(socket.EAI_AGAIN, "timeout")
+        return real(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", slow_getaddrinfo)
+    monkeypatch.setattr(qc, "QUICKCHECK_TIMEOUT_S", 0.2)
+    checker = checker_for(tmp_path)
+    loop = asyncio.get_running_loop()
+    try:
+        first = await asyncio.gather(*[
+            run_check(checker, f"n{i}.slow.example", client_ip=f"10.9.0.{i}",
+                      use_defaults=False, tips=TIPS)
+            for i in range(qc.DNS_THREADS)
+        ])
+        assert all(r.error_kind == "dns" for r in first)
+        # Both private threads are still stuck; the next check is refused, not queued.
+        third = await run_check(checker, "n9.slow.example", client_ip="10.9.0.9",
+                                use_defaults=False, tips=TIPS)
+        assert third.error_kind == "busy"
+        # Meanwhile the loop's own resolver answers at once.
+        started = loop.time()
+        await loop.getaddrinfo("127.0.0.1", 3413)
+        assert loop.time() - started < 0.5
+        assert seen_threads and all(t.startswith("quickcheck-dns") for t in seen_threads)
+    finally:
+        release.set()
+        await checker.aclose()
+    assert fake_probes == []
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "same"),
+    [
+        ("2001:db8:1:2::1", "2001:db8:1:2:ffff::9", True),   # one /64
+        ("2001:db8:1:2::1", "2001:db8:1:3::1", False),       # neighbouring /64
+        ("::ffff:198.51.100.7", "198.51.100.7", True),       # mapped is the IPv4
+        ("198.51.100.7", "198.51.100.8", False),
+    ],
+)
+def test_client_keys_group_an_ipv6_64(a: str, b: str, same: bool) -> None:
+    limiter = qc.QuickCheckLimiter("salt")
+    assert (limiter._key(a) == limiter._key(b)) is same
+
+
+@pytest.mark.parametrize("form", [f"::ffff:{OURS}", "64:ff9b::808:404"])
+async def test_own_address_refused_in_mapped_and_nat64_form(
+    tmp_path: Path, form: str, fake_dns: Any, fake_probes: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """[::ffff:<our IPv4>]:5432 reaches the IPv4 service on Linux. Whether `_is_public`
+    refuses that form outright depends on the Python release, so the hairpin check must
+    unwrap it itself. `_is_public` is relaxed here to stand in for a release where it
+    does not."""
+    assert OURS == "8.8.4.4"  # 64:ff9b::808:404 embeds it
+    monkeypatch.setattr(qc, "_is_public", lambda _ip: True)
+    monkeypatch.setattr("epic_status.net._is_public", lambda _ip: True)
+    fake_dns({"self.example.org": [form]})
+    result = await run_check(
+        checker_for(tmp_path), "self.example.org:5432", client_ip="1.1.1.1",
+        use_defaults=False, tips=TIPS,
+    )
+    assert result.error_kind == "blocked"
+    assert fake_probes == []

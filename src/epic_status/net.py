@@ -24,7 +24,9 @@ import asyncio
 import ipaddress
 import socket
 import ssl
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -121,12 +123,24 @@ def default_port(scheme: str) -> int:
     return {"http": 80, "https": 443, "ws": 80, "wss": 443}.get(scheme, 443)
 
 
-async def resolve_endpoint(endpoint: str, *, allow_private: bool = False) -> Resolved:
+Resolver = Callable[[str, int], Awaitable[list[Any]]]
+"""`getaddrinfo(host, port)` returning the same tuples as `socket.getaddrinfo`."""
+
+
+async def resolve_endpoint(
+    endpoint: str, *, allow_private: bool = False, getaddrinfo: Resolver | None = None
+) -> Resolved:
     """Resolve and vet an endpoint URL.
 
     `allow_private` exists only so the test suite and local development can point
     at 127.0.0.1. Enabling it on a public instance is the single worst thing you
     can do to this service, which is why the setting says so.
+
+    `getaddrinfo` replaces the event loop's resolver. The quick check passes its own,
+    backed by a private thread pool: the loop's default pool is shared with the poller
+    and with every httpx connect, and a lookup that never answers keeps its thread long
+    after the caller's timeout — so a visitor typing names under a dead nameserver could
+    otherwise starve the board's own probes.
     """
     parts = urlsplit(endpoint)
     scheme = (parts.scheme or "https").lower()
@@ -153,9 +167,12 @@ async def resolve_endpoint(endpoint: str, *, allow_private: bool = False) -> Res
 
     loop = asyncio.get_running_loop()
     try:
-        infos = await loop.getaddrinfo(
-            hostname, port, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP
-        )
+        if getaddrinfo is not None:
+            infos = await getaddrinfo(hostname, port)
+        else:
+            infos = await loop.getaddrinfo(
+                hostname, port, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP
+            )
     except socket.gaierror as exc:
         raise TargetRejected(Reason.DNS, f"does not resolve ({exc.strerror})") from exc
 
