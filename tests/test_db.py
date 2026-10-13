@@ -12,8 +12,17 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from epic_status.db import Database
-from epic_status.models import GeoInfo, Kind, Source, Target
+from epic_status.db import DEDUPE_WINDOW_S, Database
+from epic_status.models import (
+    Chain,
+    Event,
+    EventKind,
+    GeoInfo,
+    Kind,
+    Severity,
+    Source,
+    Target,
+)
 
 
 def _outcomes(history: list) -> list[bool]:
@@ -599,3 +608,102 @@ def test_target_round_trips_through_sqlite(db: Database) -> None:
     assert stored.geo.country == "GB"
     assert stored.geo.asn == "AS24940"
     assert stored.created_at is not None
+
+
+# ------------------------------------------------------------ incident-log folding
+
+E0 = datetime(2026, 10, 13, 7, 0, tzinfo=UTC)
+
+
+def _event(kind: EventKind = EventKind.DOWN, **fields: object) -> Event:
+    base: dict[str, object] = {
+        "chain": Chain.MAINNET,
+        "kind": kind,
+        "severity": Severity.WARN,
+        "subject": "pool.example.org",
+        "prober_id": "test",
+        "started_at": E0,
+    }
+    base.update(fields)
+    return Event.model_validate(base)
+
+
+def test_the_window_is_a_day() -> None:
+    assert DEDUPE_WINDOW_S == 86400
+
+
+def test_open_event_folds_on_target_id_not_subject(db: Database) -> None:
+    """A host renamed mid-day is still the same source; two hosts that happen to share a
+    display name are not."""
+    a = db.insert_target(_seed("a.example.org"))
+    b = db.insert_target(_seed("b.example.org"))
+    first = db.open_event(_event(subject="old name"), a)
+    db.close_event(first, E0 + timedelta(minutes=2))
+    assert db.open_event(_event(subject="new name", started_at=E0 + timedelta(hours=1)), a) == first
+    assert db.open_event(_event(subject="new name", started_at=E0 + timedelta(hours=1)), b) != first
+
+
+def test_chain_events_fold_on_subject(db: Database) -> None:
+    first = db.open_event(_event(EventKind.STALL, subject="Floonet chain", chain=Chain.FLOONET))
+    db.close_event(first, E0 + timedelta(minutes=20))
+    again = _event(
+        EventKind.STALL, subject="Floonet chain", chain=Chain.FLOONET,
+        started_at=E0 + timedelta(hours=5),
+    )
+    assert db.open_event(again) == first
+    other = _event(EventKind.STALL, subject="Mainnet chain", started_at=E0 + timedelta(hours=5))
+    assert db.open_event(other) != first
+
+
+def test_the_window_boundary(db: Database) -> None:
+    first = db.open_event(_event(ended_at=E0 + timedelta(minutes=1)))
+    inside = E0 + timedelta(seconds=DEDUPE_WINDOW_S)
+    assert db.open_event(_event(started_at=inside, ended_at=inside)) == first
+    outside = E0 + timedelta(seconds=DEDUPE_WINDOW_S + 1)
+    assert db.open_event(_event(started_at=outside, ended_at=outside)) != first
+
+
+def test_a_fold_into_a_row_still_open_closes_the_old_occurrence(db: Database) -> None:
+    """Belt and braces: if the tracker reopens while the database still has the row
+    open, the earlier occurrence ends where the new one starts rather than forever."""
+    first = db.open_event(_event())
+    later = E0 + timedelta(minutes=10)
+    assert db.open_event(_event(started_at=later)) == first
+    open_rows = db.conn.execute(
+        "SELECT COUNT(*) FROM event_occurrences WHERE event_id = ? AND ended_at IS NULL",
+        (first,),
+    ).fetchone()[0]
+    assert open_rows == 1
+    db.close_event(first, later + timedelta(minutes=5))
+    event = db.events(Chain.MAINNET)[0]
+    assert event.occurrences == 2
+    assert event.active_s == 15 * 60
+
+
+def test_close_event_twice_counts_once(db: Database) -> None:
+    first = db.open_event(_event())
+    db.close_event(first, E0 + timedelta(minutes=3))
+    db.close_event(first, E0 + timedelta(minutes=9))
+    event = db.events(Chain.MAINNET)[0]
+    assert event.ended_at == E0 + timedelta(minutes=3)
+    assert event.active_s == 180
+
+
+def test_severity_never_goes_down_on_a_fold(db: Database) -> None:
+    first = db.open_event(_event(severity=Severity.BAD, ended_at=E0))
+    later = E0 + timedelta(hours=1)
+    db.open_event(_event(severity=Severity.INFO, started_at=later, ended_at=later))
+    assert db.events(Chain.MAINNET)[0].severity is Severity.BAD
+    assert db.events(Chain.MAINNET)[0].id == first
+
+
+def test_occurrence_times_are_capped_per_event(db: Database) -> None:
+    first = 0
+    for i in range(60):
+        at = E0 + timedelta(minutes=i)
+        first = db.open_event(_event(EventKind.REORG, subject="Mainnet chain", started_at=at, ended_at=at))
+    times = db.occurrence_times([first], per_event=50)[first]
+    assert len(times) == 50
+    assert times[0][0] == E0 + timedelta(minutes=59)
+    assert db.events(Chain.MAINNET)[0].occurrences == 60
+    assert db.occurrence_times([]) == {}

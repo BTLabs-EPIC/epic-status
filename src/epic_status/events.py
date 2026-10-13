@@ -197,10 +197,12 @@ class EventTracker:
         for key in [k for k in self._open if k[0] == chain.value and k not in seen]:
             self.db.close_event(self._open.pop(key).event_id, now)
 
-    def record_reorg(self, reorg: Reorg, *, source: str) -> Event:
+    def record_reorg(
+        self, reorg: Reorg, *, source: str, now: datetime | None = None
+    ) -> Event:
         """Write a reorg as an already-closed event — or as one more occurrence of the
         day's reorg row for this chain, whose id is then the one returned."""
-        now = datetime.now(UTC)
+        now = now or datetime.now(UTC)
         depth = f"at least {reorg.depth}" if reorg.depth_is_lower_bound else str(reorg.depth)
         blocks = "block" if reorg.depth == 1 and not reorg.depth_is_lower_bound else "blocks"
         event = Event(

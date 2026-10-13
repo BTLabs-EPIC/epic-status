@@ -180,3 +180,194 @@ def test_a_logged_outage_starts_when_it_began(db: Database) -> None:
     tracker = _tracker(db)
     _down_long_enough(tracker, [_status(db, State.DOWN)], T0)
     assert db.events(Chain.MAINNET)[0].started_at == T0
+
+
+# ------------------------------------------------------- one line per source per day
+
+
+def _reorg(depth: int, chain: Chain = Chain.FLOONET) -> Reorg:
+    return Reorg(
+        chain=chain,
+        fork_height=1000,
+        depth=depth,
+        depth_is_lower_bound=False,
+        old_hash="a" * 64,
+        new_hash="b" * 64,
+        tip_height=1001,
+    )
+
+
+def _outage(
+    tracker: EventTracker, status: TargetStatus, start: datetime, down_for_s: float
+) -> datetime:
+    """One logged outage from `start`, cleared after `down_for_s` and settled.
+    Returns the moment it cleared, which is the recorded end."""
+    healthy = status.model_copy(update={"state": State.HEALTHY})
+    _down_long_enough(tracker, [status], start)
+    cleared = start + timedelta(seconds=down_for_s)
+    tracker.observe(Chain.MAINNET, [healthy], SUMMARY, now=cleared)
+    tracker.observe(
+        Chain.MAINNET, [healthy], SUMMARY, now=cleared + timedelta(seconds=SETTLE_S)
+    )
+    return cleared
+
+
+def test_repeat_outages_inside_a_day_are_one_entry_with_a_count(db: Database) -> None:
+    tracker = _tracker(db)
+    status = _status(db, State.DOWN)
+    ends = [
+        _outage(tracker, status, T0 + timedelta(hours=h), down_for_s=120 + 60 * h)
+        for h in range(7)
+    ]
+
+    events = db.events(Chain.MAINNET)
+    assert len(events) == 1
+    event = events[0]
+    assert event.occurrences == 7
+    assert event.started_at == T0
+    assert event.last_started_at == T0 + timedelta(hours=6)
+    assert event.ended_at == ends[-1]
+    assert not event.ongoing
+    # 120 + 180 + ... + 480 seconds: each outage's own length, gaps excluded.
+    assert event.active_s == sum(120 + 60 * h for h in range(7))
+    assert event.last_duration_s == 480
+
+
+def test_every_occurrence_is_kept(db: Database) -> None:
+    tracker = _tracker(db)
+    status = _status(db, State.DOWN)
+    for h in range(3):
+        _outage(tracker, status, T0 + timedelta(hours=h), down_for_s=300)
+
+    event = db.events(Chain.MAINNET)[0]
+    assert event.id is not None
+    times = db.occurrence_times([event.id])[event.id]
+    assert [start for start, _ in times] == [T0 + timedelta(hours=h) for h in (2, 1, 0)]
+    assert all(end is not None for _, end in times)
+
+
+def test_a_repeat_after_the_window_opens_a_new_entry(db: Database) -> None:
+    tracker = _tracker(db)
+    status = _status(db, State.DOWN)
+    _outage(tracker, status, T0, down_for_s=300)
+    _outage(tracker, status, T0 + timedelta(hours=23), down_for_s=300)
+    # Twenty-four hours after the *first* occurrence, not the latest: the bound on
+    # one entry per rolling day depends on anchoring there.
+    _outage(tracker, status, T0 + timedelta(hours=24, minutes=1), down_for_s=300)
+
+    events = db.events(Chain.MAINNET)
+    assert [e.occurrences for e in events] == [1, 2]
+    assert events[0].started_at == T0 + timedelta(hours=24, minutes=1)
+    assert (events[0].started_at - events[1].started_at) >= timedelta(hours=24)
+
+
+def test_down_up_down_reopens_the_same_entry_as_ongoing(db: Database) -> None:
+    tracker = _tracker(db)
+    status = _status(db, State.DOWN)
+    _outage(tracker, status, T0, down_for_s=300)
+    first = db.events(Chain.MAINNET)[0]
+    assert not first.ongoing
+
+    again = T0 + timedelta(hours=1)
+    _down_long_enough(tracker, [status], again)
+
+    events = db.events(Chain.MAINNET)
+    assert len(events) == 1
+    assert events[0].id == first.id
+    assert events[0].ongoing
+    assert events[0].occurrences == 2
+    assert events[0].last_started_at == again
+    # The closed occurrence is counted; the running one is added only in the total.
+    assert events[0].active_s == 300
+    assert events[0].active_total_s >= 300
+
+
+def test_active_time_accumulates_on_close(db: Database) -> None:
+    tracker = _tracker(db)
+    status = _status(db, State.DOWN)
+    _outage(tracker, status, T0, down_for_s=200)
+    _outage(tracker, status, T0 + timedelta(hours=2), down_for_s=400)
+
+    event = db.events(Chain.MAINNET)[0]
+    assert event.active_s == 600
+    assert event.active_total_s == 600
+
+
+def test_a_restart_mid_repeat_does_not_duplicate(db: Database) -> None:
+    status = _status(db, State.DOWN)
+    first = _tracker(db)
+    _outage(first, status, T0, down_for_s=300)
+    _down_long_enough(first, [status], T0 + timedelta(hours=1))
+
+    second = _tracker(db)
+    second.observe(Chain.MAINNET, [status], SUMMARY, now=T0 + timedelta(hours=1, minutes=5))
+    assert len(db.ongoing_events()) == 1
+    healthy = status.model_copy(update={"state": State.HEALTHY})
+    cleared = T0 + timedelta(hours=1, minutes=10)
+    second.observe(Chain.MAINNET, [healthy], SUMMARY, now=cleared)
+    second.observe(Chain.MAINNET, [healthy], SUMMARY, now=cleared + timedelta(seconds=SETTLE_S))
+
+    events = db.events(Chain.MAINNET)
+    assert len(events) == 1
+    assert events[0].occurrences == 2
+    assert events[0].ended_at == cleared
+    assert db.ongoing_events() == []
+
+
+def test_reorgs_fold_with_a_count_and_stay_instants(db: Database) -> None:
+    tracker = _tracker(db)
+    for i in range(5):
+        tracker.record_reorg(_reorg(1), source="n", now=T0 + timedelta(hours=i))
+
+    events = db.events(Chain.FLOONET)
+    assert len(events) == 1
+    event = events[0]
+    assert event.occurrences == 5
+    assert event.kind is EventKind.REORG
+    assert not event.ongoing
+    assert event.ended_at == T0 + timedelta(hours=4)
+    # The chain panel still counts each reorg, not each row.
+    assert db.reorg_depths_since(Chain.FLOONET, T0 - timedelta(hours=1)) == [1] * 5
+
+
+def test_a_deeper_reorg_escalates_the_entry(db: Database) -> None:
+    tracker = _tracker(db)
+    tracker.record_reorg(_reorg(1), source="n", now=T0)
+    tracker.record_reorg(_reorg(4), source="n", now=T0 + timedelta(hours=1))
+    tracker.record_reorg(_reorg(2), source="n", now=T0 + timedelta(hours=2))
+
+    event = db.events(Chain.FLOONET)[0]
+    assert event.occurrences == 3
+    assert event.severity is Severity.WARN
+    assert event.depth == 4
+    # The detail is the latest occurrence's; the worst is kept in severity and depth.
+    assert "2 blocks replaced" in (event.detail or "")
+    assert db.events(Chain.FLOONET, min_severity=Severity.WARN)[0].id == event.id
+
+
+def test_different_sources_and_kinds_do_not_fold(db: Database) -> None:
+    tracker = _tracker(db)
+    tracker.record_reorg(_reorg(1, Chain.FLOONET), source="n", now=T0)
+    tracker.record_reorg(_reorg(1, Chain.MAINNET), source="n", now=T0)
+    node = _status(db, State.DOWN)
+    relay = _status(db, State.DOWN, kind=Kind.EPICBOX)
+    _down_long_enough(tracker, [node, relay], T0)
+
+    assert len(db.events(Chain.FLOONET)) == 1
+    mainnet = db.events(Chain.MAINNET)
+    assert sorted((e.kind.value, e.subject) for e in mainnet) == [
+        ("down", "epicbox.example.org"),
+        ("down", "node.example.org"),
+        ("reorg", "Mainnet chain"),
+    ]
+    assert all(e.occurrences == 1 for e in mainnet)
+
+
+def test_a_recurring_entry_sorts_by_its_latest_occurrence(db: Database) -> None:
+    tracker = _tracker(db)
+    node = _status(db, State.DOWN)
+    _outage(tracker, node, T0, down_for_s=120)
+    tracker.record_reorg(_reorg(1, Chain.MAINNET), source="n", now=T0 + timedelta(hours=1))
+    _outage(tracker, node, T0 + timedelta(hours=2), down_for_s=120)
+
+    assert [e.kind for e in db.events(Chain.MAINNET)] == [EventKind.DOWN, EventKind.REORG]
