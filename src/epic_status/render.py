@@ -145,6 +145,7 @@ def _environment() -> Environment:
     env.filters["event_plural"] = lambda k: _EVENT_PLURAL.get(k, "occurrences")
     env.filters["event_active"] = lambda k: _EVENT_ACTIVE.get(k)
     env.filters["event_latest"] = _event_latest
+    env.filters["event_first"] = _event_first
     env.filters["state_label"] = lambda s: _STATE_LABEL.get(s, "Unknown")
     env.filters["flag"] = lambda c: Markup(flag(c))
     env.filters["flag_title"] = flag_title
@@ -352,6 +353,16 @@ def _event_latest(event: Event) -> str:
     if latest.date() == event.started_at.astimezone(UTC).date():
         return latest.strftime("%H:%M UTC")
     return _when(latest)
+
+
+def _event_first(event: Event) -> str:
+    """When the first folded occurrence began, as briefly as is unambiguous: a time of day
+    when it is the same UTC day as the latest — which is the time the log line leads
+    with — and the full `when` otherwise."""
+    first = event.started_at.astimezone(UTC)
+    if first.date() == event.latest_start.astimezone(UTC).date():
+        return first.strftime("%H:%M UTC")
+    return _when(first)
 
 
 def _epoch_ms(value: datetime | None) -> str:

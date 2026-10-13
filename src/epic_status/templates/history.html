@@ -22,7 +22,13 @@
   <ol class="events">
     {% for e in events %}
     <li class="event sev-{{ e.severity.value }}{% if e.ongoing %} is-ongoing{% endif %}" id="event-{{ e.id }}">
-      <time class="event-when" datetime="{{ e.started_at | rfc3339 }}">{{ e.started_at | when }}</time>
+      {#
+        The latest occurrence's start, which is what the log is ordered by. Leading with the
+        first one made the column of times run out of order — an entry that recurred
+        this morning sat above yesterday's, labelled with the day before — and a log read for
+        "is it over" has to read top to bottom in time. The first start is in the line below.
+      #}
+      <time class="event-when" datetime="{{ e.latest_start | rfc3339 }}">{{ e.latest_start | when }}</time>
       <div class="event-what">
         <p class="event-title">
           <span class="event-kind">{{ e.kind | event_label }}</span>
@@ -32,13 +38,13 @@
         {#
           One line per source per day: repeats inside 24 hours of the first are folded
           into this entry, so the count is said here rather than shown as more rows.
-          The detail above, and the outcome, are the latest occurrence's.
+          The time, the detail above and the outcome are the latest occurrence's.
         #}
         {% if e.occurrences > 1 %}
-        <p class="event-detail event-repeats">
-          <span class="event-count">{{ e.occurrences }} {{ e.kind | event_plural }} in 24 h</span>
-          {% if e.kind | event_active %}· <span class="event-active">{{ e.active_total_s | duration }} {{ e.kind | event_active }} in total</span>{% endif %}
-          · <span class="event-latest">latest <time datetime="{{ e.latest_start | rfc3339 }}">{{ e | event_latest }}</time></span>
+        <p class="event-repeats">
+          <span class="event-count"><b>{{ e.occurrences }}</b> {{ e.kind | event_plural }} in 24 h</span>
+          {%- if e.kind | event_active %}<span class="event-active">{{ e.active_total_s | duration }} {{ e.kind | event_active }} in total</span>{% endif -%}
+          <span class="event-latest">first <time datetime="{{ e.started_at | rfc3339 }}">{{ e | event_first }}</time></span>
         </p>
         {% endif %}
       </div>

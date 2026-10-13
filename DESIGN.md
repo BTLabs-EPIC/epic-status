@@ -45,6 +45,23 @@ says nothing; one rule between hosts says the same thing in one pixel.
 Direction C was rejected for mobile specifically: density is the hardest thing to keep
 honest on a phone, and the phone is the case this page is actually read in.
 
+**The phone row is a readout, not a stacked table.** Name and operator on the left, the
+state word on the right, then one line of four aligned cells — vs tip, version, latency,
+24h for a node — on the same track list in every group, so a column can be read straight
+down the page. Height, location, endpoint, hash, IPv6, CORS and vantages are one tap away
+in the row's panel. The earlier phone layout stacked five to seven labelled blocks per
+host; eight hosts ran to four screens and nothing lined up across rows.
+
+**Secondary groups fold on a phone, and only when calm.** Relays and pools collapse to a
+heading and "3 of 3 online" when every host in them is online; a group with a fault is
+open, and opens itself if a fault appears. With JavaScript off every group is open.
+
+**The quick node check sits beside the verdict.** On a wide screen it takes the right half
+of the hero, which was empty; below 1100px it follows the verdict, facts and freshness line
+and precedes the node list — network first, then "is it my node", then the list. Closed it
+is a title, one line and a field; it opens downward with the result, closes on × or Escape,
+and works as a plain form post with JavaScript off.
+
 ## Colour
 
 | Token | Job |
@@ -74,9 +91,10 @@ screenshot pasted into a chat.
 - **Mono:** JetBrains Mono ahead of a system fallback, for every measurement — heights,
   hashes, latencies, versions, uptimes. Unambiguous zero and distinguishable `l/1/I` matter
   when most of the page is numbers. Monospace here is data, not costume.
-- **Labels are sentence case.** They used to be uppercase and letterspaced, twenty-seven of
-  them on one screen, which became a texture the eye slid off and spent the one treatment
-  that could have marked something as important.
+- **Labels are sentence case**, the hero's four facts and the row panel's labels included.
+  They used to be uppercase and letterspaced, twenty-seven of them on one screen, which
+  became a texture the eye slid off and spent the one treatment that could have marked
+  something as important.
 - Tabular numerals everywhere a column of figures appears, so a changing digit does not
   shift the column.
 
@@ -98,7 +116,16 @@ screenshot pasted into a chat.
 
 One authored moment: a slow pulse on the healthy traffic light, so a live page is
 distinguishable from a screenshot or a frozen tab. Everything else is a colour or width
-transition at `--dur`. `prefers-reduced-motion` removes all of it.
+transition at `--dur`, plus the quick check's result opening (rows `0fr → 1fr` and a fade,
+240ms). `prefers-reduced-motion` removes all of it.
+
+## Touch
+
+Every control on the phone layout is at least 44px tall: the section tabs, the network
+segments (their target reaches the control's outer edge), the theme toggle, the row
+expander, the fold headings, the check field and buttons, the footer links. The top bar is
+two rows on a phone — network and theme, then the sections as a tab strip — and is not
+pinned, so it does not hold a fifth of an 844px screen.
 
 ## Constraints that shape all of the above
 
@@ -121,5 +148,6 @@ transition at `--dur`. `prefers-reduced-motion` removes all of it.
 1. **The display face.** Montserrat should be replaced by something chosen, self-hosted,
    with a usable licence. This is the last remaining finding from the deterministic
    detector and the single largest thing still making the page look generic.
-2. Latency bars appear on desktop only. On a phone the number stands alone, which is
-   acceptable but not equivalent.
+2. Latency bars appear on desktop only, and from 1080px: between 900 and 1079 the bar and
+   the recent-checks strip give way so the State column is never clipped. On a phone the
+   number stands alone, which is acceptable but not equivalent.

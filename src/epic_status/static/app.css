@@ -4592,3 +4592,55 @@ input[data-state='failed'] {
     display: none;
   }
 }
+
+/* ------------------------------------------------------ folded repeats
+ *
+ * One entry per source per day, so the entry has to say how many times it happened. The
+ * count is the figure a reader came for — "is this host flaky or was that once" — so it
+ * is set in the ink and the weight of a value; the total and the latest time are context.
+ * The separators are drawn, not typed, so a wrap never strands a "·" at a line start. */
+/* The dot sits in the column gap, absolutely, and the container clips: a dot that starts a
+   wrapped line falls outside the box and is cut away, so no line ever begins with one. */
+.event-repeats {
+  margin: var(--sp-4) 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-16);
+  overflow: hidden;
+  font-size: var(--t-small);
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.event-repeats > span {
+  position: relative;
+}
+
+.event-repeats > span + span::before {
+  content: '';
+  position: absolute;
+  left: calc(-1 * var(--sp-8) - 1.5px);
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin-top: -1.5px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+.event-count {
+  color: var(--ink);
+}
+
+.event-count b {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.sev-warn .event-count b {
+  color: var(--warn-ink);
+}
+
+.sev-bad .event-count b {
+  color: var(--danger-ink);
+}

@@ -294,7 +294,7 @@ async def test_feed_says_how_many_times(app: FastAPI, client: httpx.AsyncClient)
 async def test_history_shows_the_count(app: FastAPI, client: httpx.AsyncClient) -> None:
     _record_repeats(app.state.service)
     body = (await client.get("/history")).text
-    assert '<span class="event-count">7 outages in 24 h</span>' in body
+    assert '<span class="event-count"><b>7</b> outages in 24 h</span>' in body
     # Six closed two-minute outages plus the one running for three hours.
     assert re.search(r"3h 1[23]m down in total", body)
     assert "Ongoing" in body
