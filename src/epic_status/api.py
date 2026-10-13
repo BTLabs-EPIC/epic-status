@@ -51,6 +51,7 @@ from .render import (
     render_board,
     render_feed,
     render_history,
+    render_quickcheck_result,
     render_submit,
 )
 from .submit import SubmissionError, Validator, accept
@@ -292,6 +293,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 **security_headers(connect=_probe_origins(snap)),
             },
         )
+
+    if settings.quickcheck_enabled:
+
+        @app.post("/check", response_class=HTMLResponse, include_in_schema=False)
+        async def quick_check_page(
+            request: Request,
+            address: Annotated[str, Form(max_length=1024)] = "",
+            defaults: Annotated[str, Form(max_length=8)] = "",
+        ) -> Response:
+            """The board's quick check, as a form post.
+
+            Two answers from one route. With `x-quickcheck: fragment` — app.js — only the
+            result is rendered, for the script to swap into the open box. Without it — no
+            JavaScript — the whole mainnet board is rendered again with the box open and
+            the result in it, so the check works on a page with scripts blocked.
+            """
+            fragment = request.headers.get("x-quickcheck", "").lower() == "fragment"
+            if not _same_origin_post(request):
+                return Response(
+                    "Cross-site checks are refused.",
+                    status_code=403,
+                    media_type="text/plain",
+                    headers={"cache-control": "no-store", **security_headers()},
+                )
+            result = await service.quick_check(
+                address,
+                client_ip=client_address(request),
+                use_defaults=defaults.strip().lower() in ("1", "true", "yes", "on"),
+            )
+            status = _check_status(result)
+            headers = {"cache-control": "no-store"}
+            if result.retry_after_s:
+                headers["retry-after"] = str(result.retry_after_s)
+            if fragment:
+                return HTMLResponse(
+                    render_quickcheck_result(result=result, settings=settings),
+                    status_code=status,
+                    headers={**headers, **security_headers()},
+                )
+            snap = service.snapshot_for(Chain.MAINNET)
+            html = render_board(
+                snapshot=snap,
+                settings=settings,
+                chain=Chain.MAINNET,
+                chains=service.chains(),
+                qc=result,
+                qc_input=result.input,
+            )
+            return HTMLResponse(
+                html,
+                status_code=status,
+                headers={**headers, **security_headers(connect=_probe_origins(snap))},
+            )
 
     @app.api_route(
         "/history",
@@ -807,6 +861,40 @@ def _check_response(payload: dict[str, Any], status_code: int) -> Response:
     )
 
 
+def _check_status(result: QuickCheckResult) -> int:
+    """429 for a visitor or a target over its limit, and 429 again — not 503 — when every
+    check slot is in use.
+
+    503 would be the more exact word for "busy", and it is the one status this service
+    must never send through its own proxy: the nginx vhost intercepts 502/503/504 and
+    replaces the body with the branded "status page is down" notice. A visitor who pressed
+    Check during a burst would be told the whole monitor had failed. 429 with Retry-After
+    says "try again shortly", which is the true and useful half of it.
+    """
+    return 429 if result.error_kind in ("rate_limited", "busy") else 200
+
+
+def _same_origin_post(request: Request) -> bool:
+    """Whether a form post plausibly came from this site's own page.
+
+    The HTML route accepts an ordinary form encoding — it has to, to work without
+    JavaScript — and an ordinary form can be submitted from any other site. That would let
+    a third-party page make visitors' browsers aim this server at an address of its
+    choosing, laundered through their IPs and their rate-limit allowances. Browsers send
+    `sec-fetch-site` on every request; where an old one does not, `origin` is compared with
+    the host the request was addressed to. A client that sends neither is not a browser
+    being steered by a page, and is left to the rate limits.
+    """
+    site = request.headers.get("sec-fetch-site", "").lower()
+    if site:
+        return site in ("same-origin", "none")
+    origin = request.headers.get("origin")
+    if origin is None or origin == "null":
+        return origin is None
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    return origin.split("://", 1)[-1].rstrip("/") == host
+
+
 async def _quick_check_route(service: Service, request: Request) -> Response:
     if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
         return _check_response({"error": "cross-site requests are refused"}, 403)
@@ -831,9 +919,7 @@ async def _quick_check_route(service: Service, request: Request) -> Response:
     result = await service.quick_check(
         address, client_ip=client_address(request), use_defaults=defaults
     )
-    # 429 for a visitor or target over its limit; 503 when every check slot is in use,
-    # which is this server's state rather than anything the caller did.
-    status = {"rate_limited": 429, "busy": 503}.get(result.error_kind or "", 200)
+    status = _check_status(result)
     response = _check_response(result.model_dump(mode="json"), status)
     if result.retry_after_s:
         response.headers["retry-after"] = str(result.retry_after_s)

@@ -22,17 +22,19 @@
   <div class="qc-head">
     <h2 class="qc-title" id="qc-title">Quick node check</h2>
     {#
-      Present from the start but hidden until there is something to clear. A real <button>
-      with a name, not an × glyph in a span: the glyph is drawn in SVG because the
-      multiplication sign is exactly the kind of character a minimal font set boxes.
+      Present from the start but hidden until there is something to close. A link to the
+      plain board rather than a button, so it closes the result with JavaScript off too —
+      that page is the board with the box closed. app.js intercepts it and closes in place.
+      The × is SVG because the multiplication sign is exactly the kind of character a
+      minimal font set draws as a box.
     #}
-    <button type="button" class="qc-close" aria-label="Close the check and clear the address"
-            title="Close (Esc)"{% if not qc %} hidden{% endif %}>
+    <a class="qc-close" href="/" aria-label="Close the check and clear the address"
+       title="Close (Esc)"{% if not qc %} hidden{% endif %}>
       <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none"
            stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
         <path d="M2 2l8 8M10 2l-8 8" />
       </svg>
-    </button>
+    </a>
   </div>
   <p class="qc-lede" id="qc-lede">Paste a node address. No port? We try the API on 3413, then the peer port on 3414.</p>
 
@@ -68,12 +70,15 @@
   to do it in a monochrome screenshot pasted into a chat.
 #}
 {% macro result(r) %}
-{% set word = {'ok': 'Answering', 'warn': 'Limited', 'bad': 'No answer', 'info': 'Not checked'}[r.tone] %}
+{#
+  The headline is the state, in words — "Answering on 3413, in sync.", "No answer on 3413
+  or 3414." — so the dot beside it is the only thing that is a colour. A separate state word
+  in front of it said the same thing twice.
+#}
 <div class="qc-out tone-{{ r.tone }}" data-tone="{{ r.tone }}"{% if r.error_kind %} data-error="{{ r.error_kind }}"{% endif %}>
   <p class="qc-verdict">
     <span class="dot qc-dot" aria-hidden="true"></span>
-    <b class="qc-word">{{ word }}</b>
-    <span class="qc-headline">{{ r.headline }}</span>
+    <b class="qc-headline">{{ r.headline }}</b>
   </p>
 
   {% if r.error_kind %}
@@ -120,9 +125,12 @@
       <dd>
         {%- if p.tcp_open -%}
           <b>open</b>{% if p.latency_ms is not none %}<i>·</i>{{ p.latency_ms | ms }} to connect{% endif %}
-          {%- if p.handshake_ok %}<i>·</i>handshake ok{% elif not p.handshake_attempted %}<span class="qc-note"{% if p.handshake_note %} title="{{ p.handshake_note }}"{% endif %}>Connect only. No handshake is sent, so the peer's version is not read.</span>{% endif -%}
+          {%- if p.handshake_ok %}<i>·</i>handshake ok{% elif not p.handshake_attempted %}<span class="qc-note"{% if p.handshake_note %} title="{{ p.handshake_note }}"{% endif %}>Connect only, no handshake sent</span>{% endif -%}
         {%- else -%}
-          <b>closed</b>{% if p.error %}<i>·</i>{{ p.error }}{% endif %}
+          {#- Refused is a closed port; a timeout is a port that did not answer, which a
+              firewall dropping the packets also produces. Two different facts. -#}
+          {%- if p.error and 'refused' in p.error -%}<b>closed</b>{% else %}<b>no answer</b>{% endif -%}
+          {%- if p.error %}<i>·</i>{{ p.error | replace('connection timed out', 'timed out') }}{% endif %}
         {%- endif -%}
       </dd>
     </div>
@@ -182,7 +190,7 @@
     #}
     <div class="qc-fact">
       <dt>Peers</dt>
-      <dd class="qc-dim">not public — needs the owner API secret</dd>
+      <dd class="qc-dim">not public (owner API only)</dd>
     </div>
     {% endif %}
   </dl>

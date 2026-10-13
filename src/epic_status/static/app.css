@@ -3661,8 +3661,17 @@ input[data-state='failed'] {
   }
 
   .chainsel a {
+    position: relative;
     height: 2.375rem;
     padding: 0 var(--sp-12);
+  }
+
+  /* The segment is drawn 38px tall inside the control's 2px padding and hairline; its
+     target reaches the control's outer edge, which is the 44 that a thumb needs. */
+  .chainsel a::before {
+    content: '';
+    position: absolute;
+    inset: -3px -1px;
   }
 
   .theme-toggle {
@@ -3756,6 +3765,7 @@ input[data-state='failed'] {
     margin-top: var(--sp-12);
     font-size: 1rem;
     line-height: 1.5;
+    text-wrap: pretty;
   }
 
   .hero-facts {
@@ -3852,6 +3862,7 @@ input[data-state='failed'] {
   border: 0;
   background: none;
   color: var(--ink-dim);
+  text-decoration: none;
   cursor: pointer;
   border-radius: 6px;
 }
@@ -4029,27 +4040,22 @@ input[data-state='failed'] {
 .qc-verdict {
   margin: 0;
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--sp-2) var(--sp-8);
+  align-items: flex-start;
+  gap: var(--sp-12);
   font-size: var(--t-body);
   line-height: 1.4;
 }
 
+/* On the first line's centre, not the paragraph's: a headline that wraps keeps its dot
+   beside its first word. */
 .qc-dot {
-  align-self: center;
+  margin: 0.4rem 0 0 var(--sp-2);
   background: var(--ink-dim);
 }
 
-.qc-word {
-  font-weight: 600;
-}
-
 .qc-headline {
+  font-weight: 600;
   color: var(--ink);
-  flex-basis: 100%;
-  font-size: var(--t-small);
-  color: var(--ink-dim);
 }
 
 /* The result's own state, said with the board's colours: a node answering is the one
@@ -4058,22 +4064,13 @@ input[data-state='failed'] {
   background: var(--ok-ink);
   box-shadow: 0 0 0 3px var(--ok-bg);
 }
-.qc-out.tone-ok .qc-word {
-  color: var(--ok-ink);
-}
 .qc-out.tone-warn .qc-dot {
   background: var(--warn-dot);
   box-shadow: 0 0 0 3px var(--warn-bg);
 }
-.qc-out.tone-warn .qc-word {
-  color: var(--warn-ink);
-}
 .qc-out.tone-bad .qc-dot {
   background: var(--danger-dot);
   box-shadow: 0 0 0 3px var(--danger-bg);
-}
-.qc-out.tone-bad .qc-word {
-  color: var(--danger-ink);
 }
 .qc-out.tone-info .qc-dot {
   background: transparent;
@@ -4235,7 +4232,7 @@ input[data-state='failed'] {
   }
 
   .group-primary {
-    margin-bottom: var(--sp-32);
+    margin-bottom: var(--sp-16);
   }
 
   .group-head {
@@ -4405,6 +4402,7 @@ input[data-state='failed'] {
 
   .row-meta > .m em,
   .row-meta > .row-up em {
+    opacity: 1;
     font-size: var(--t-micro);
     white-space: nowrap;
     overflow: hidden;
@@ -4512,5 +4510,33 @@ input[data-state='failed'] {
 @media (min-width: 900px) {
   .d-facts .d-narrow {
     display: none;
+  }
+}
+
+/* ------------------------------------------------- small links, full-size targets
+ *
+ * Two kinds of link on the phone layout are text-sized by nature: the released-version
+ * link in a group heading and the footer's four links. The footer links are given the
+ * height directly; the version link sits on a heading line that is already 44px, so its
+ * target is extended with a pseudo-element instead of being allowed to make the line taller. */
+@media (max-width: 899px) {
+  .group-count a {
+    position: relative;
+  }
+
+  .group-count a::before {
+    content: '';
+    position: absolute;
+    inset: -16px -8px;
+  }
+
+  .foot-nav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+  }
+
+  .foot-row {
+    row-gap: 0;
   }
 }

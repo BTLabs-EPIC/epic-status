@@ -38,6 +38,7 @@ from .models import (
     TargetStatus,
 )
 from .probes.pool import ADAPTERS
+from .quickcheck import QuickCheckResult
 from .score import version_behind
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -635,7 +636,7 @@ def render_board(
     settings: Settings,
     chain: Chain = Chain.MAINNET,
     chains: Sequence[Chain] = (),
-    qc: Any = None,
+    qc: QuickCheckResult | None = None,
     qc_input: str = "",
 ) -> str:
     """The board. `qc` is a quick-check result to render already open — the no-JavaScript
@@ -651,7 +652,7 @@ def render_board(
     return _environment().get_template("board.html").render(**context)
 
 
-def render_quickcheck_result(*, result: Any, settings: Settings) -> str:
+def render_quickcheck_result(*, result: QuickCheckResult, settings: Settings) -> str:
     """Only the result of a quick check, for app.js to swap into the open box.
 
     Rendered by the same macro the full page uses, so the scripted path and the form path

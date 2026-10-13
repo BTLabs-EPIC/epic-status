@@ -1302,7 +1302,7 @@
 
     /* Only for failures that never reached the server, so there is no fragment to show.
        Built with textContent, like every other message this file writes. */
-    function localMessage(tone, word, text) {
+    function localMessage(tone, text) {
       var out = document.createElement('div');
       out.className = 'qc-out tone-' + tone;
       var p = document.createElement('p');
@@ -1310,14 +1310,10 @@
       var dot = document.createElement('span');
       dot.className = 'dot qc-dot';
       dot.setAttribute('aria-hidden', 'true');
-      var b = document.createElement('b');
-      b.className = 'qc-word';
-      b.textContent = word;
-      var line = document.createElement('span');
+      var line = document.createElement('b');
       line.className = 'qc-headline';
       line.textContent = text;
       p.appendChild(dot);
-      p.appendChild(b);
       p.appendChild(line);
       out.appendChild(p);
       return out;
@@ -1347,7 +1343,7 @@
       if (busy) return;
       address = (address || '').trim();
       if (!address) {
-        show(localMessage('info', 'Not checked', 'Paste a node address first — a hostname or an IP, with or without a port.'));
+        show(localMessage('info', 'Paste a node address first — a hostname or an IP, with or without a port.'));
         input.setAttribute('aria-invalid', 'true');
         input.focus();
         return;
@@ -1377,7 +1373,7 @@
         })
         .catch(function () {
           setBusy(false);
-          show(localMessage('info', 'Not checked', 'This page could not reach its own server. Check your connection and try again.'));
+          show(localMessage('info', 'This page could not reach its own server. Check your connection and try again.'));
         });
     }
 
@@ -1393,7 +1389,8 @@
     });
 
     if (close) {
-      close.addEventListener('click', function () {
+      close.addEventListener('click', function (event) {
+        event.preventDefault();
         shut(true);
       });
     }
