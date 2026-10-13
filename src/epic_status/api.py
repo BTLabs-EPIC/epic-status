@@ -55,6 +55,7 @@ from .render import (
     render_submit,
 )
 from .submit import SubmissionError, Validator, accept
+from .upstream import ReleaseWatcher
 from .vantage import Ingest, Rejected, parse_keys
 from .web import client_address, cors, json_response, security_headers, stamp
 
@@ -138,7 +139,8 @@ class Service:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.db = Database(settings.db, settings.prober_id)
-        self.poller = Poller(self.db, settings)
+        self.releases = ReleaseWatcher(self.db, settings)
+        self.poller = Poller(self.db, settings, self.releases)
         self.validator = Validator(self.db, settings)
         # Parsed here so a malformed key list fails at boot, not on the first push.
         keys = parse_keys(settings.prober_keys)
@@ -220,12 +222,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             validate_task = asyncio.create_task(
                 _run_validator(service), name="validator"
             )
+            release_task = asyncio.create_task(service.releases.run(), name="releases")
+            tasks = (poll_task, validate_task, release_task)
             try:
                 yield
             finally:
-                for task in (poll_task, validate_task):
+                for task in tasks:
                     task.cancel()
-                await asyncio.gather(poll_task, validate_task, return_exceptions=True)
+                await asyncio.gather(*tasks, return_exceptions=True)
                 await service.quickcheck.aclose()
         service.db.close()
 
@@ -1141,6 +1145,8 @@ def _serialise(snap: Snapshot, settings: Settings) -> dict[str, Any]:
             "providers": net.providers,
             "co_hosted_addresses": net.co_hosted,
             "released_node_version": net.released_node_version,
+            "released_node_source": net.released_node_source,
+            "released_wallet_version": net.released_wallet_version,
             "nodes_current": net.nodes_current,
             "nodes_versioned": net.nodes_versioned,
             "activity": (

@@ -283,7 +283,19 @@ class Network(BaseModel):
             "what the fleet is running: the highest version seen across monitored "
             "nodes would score a uniformly out-of-date fleet as unanimous."
         ),
-        examples=["4.0.4"],
+        examples=["4.1.0"],
+    )
+    released_node_source: str | None = Field(
+        None,
+        description=(
+            "Where released_node_version came from: `github` (the latest non-draft, "
+            "non-prerelease release, refreshed every few hours), `seed` (GitHub not "
+            "reached yet; the committed fallback) or `pinned` (set by the operator)."
+        ),
+        examples=["github"],
+    )
+    released_wallet_version: str | None = Field(
+        None, description="The wallet version upstream has published.", examples=["4.1.0"]
     )
     nodes_current: int = Field(
         0,

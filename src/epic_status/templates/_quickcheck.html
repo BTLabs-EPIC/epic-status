@@ -1,7 +1,8 @@
 {#
   The quick node check: one address in, one probe out, the answer in the same box.
 
-  Closed it is three things — a title, one line saying what it does, a field and a button —
+  Closed it is a title, a field and a button — the placeholder says what goes in it, and
+  the ports are the server's business: no port typed means 3413, then 3414 —
   because it sits beside the verdict on a desktop and between the verdict and the node list
   on a phone, and in both places the board is the main content. It opens downward with
   the result and closes again on the × or Escape.
@@ -36,7 +37,6 @@
       </svg>
     </a>
   </div>
-  <p class="qc-lede" id="qc-lede">Paste a node address. No port? We try the API on 3413, then the peer port on 3414.</p>
 
   <form class="qc-form" method="post" action="/check#quick-check" novalidate>
     {# Which board to render the answer into on the no-JavaScript path. The check itself
@@ -45,8 +45,8 @@
     <label class="sr-only" for="qc-input">Node address</label>
     <input id="qc-input" class="qc-input" name="address" type="text" inputmode="url"
            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
-           maxlength="253" placeholder="node.example.org" required
-           value="{{ qc_input }}" aria-describedby="qc-lede"
+           maxlength="253" placeholder="node address or IP" required
+           value="{{ qc_input }}"
            {% if qc and qc.error_kind == 'input' %}aria-invalid="true"{% endif %} />
     <button type="submit" class="qc-go">
       <span class="qc-go-idle">Check</span>

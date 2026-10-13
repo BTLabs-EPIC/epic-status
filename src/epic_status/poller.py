@@ -62,6 +62,7 @@ from .probes.node import probe_cors, probe_header, probe_tip, probe_version
 from .probes.pool import probe_pool
 from .chain import ChainTracker, HeaderFetch, canonical_tip
 from .events import EventTracker
+from .upstream import ReleaseWatcher
 from .score import (
     ForkDetector,
     epicbox_state,
@@ -97,9 +98,17 @@ refresh interval, so one 429 does not cost a target its provider for a week."""
 
 
 class Poller:
-    def __init__(self, db: Database, settings: Settings) -> None:
+    def __init__(
+        self, db: Database, settings: Settings, releases: ReleaseWatcher | None = None
+    ) -> None:
         self.db = db
         self.settings = settings
+        # The published releases. A watcher that never fetches still answers — with
+        # an operator's pin or the committed seed — so a Poller built without one (the
+        # tests, the CLI) compares against exactly what it did before.
+        self.releases = releases or ReleaseWatcher(
+            db, settings.model_copy(update={"release_check": False})
+        )
         # One snapshot per chain, and no entry at all for a chain with nothing
         # configured. A single slot was correct while there was one network; two
         # networks sharing one would mean whichever chain was summarised last won.
@@ -956,7 +965,8 @@ class Poller:
         """One chain's view. Every list handed in is already filtered to `chain`, and
         every aggregate below — the counts, the medians, the health score, the
         provider and country spread — describes that chain alone."""
-        released = self.settings.released_node_version or None
+        node_release = self.releases.node
+        released = node_release.version or None
         tip_hash = next(
             (s.tip_hash for s in nodes if s.height == tip and s.tip_hash), None
         )
@@ -1014,6 +1024,9 @@ class Poller:
             providers=dict(sorted(providers.items(), key=lambda kv: -kv[1])),
             co_hosted=sum(1 for count in addresses.values() if count > 1),
             released_node_version=released,
+            released_node_url=node_release.url,
+            released_node_source=node_release.source,
+            released_wallet_version=self.releases.wallet.version,
             nodes_versioned=sum(1 for s in nodes if s.node_version),
             nodes_current=sum(
                 1 for s in nodes if s.node_version and s.node_version == released

@@ -3891,16 +3891,10 @@ input[data-state='failed'] {
   outline-offset: -4px;
 }
 
-.qc-lede {
-  margin: var(--sp-4) 0 var(--sp-12);
-  font-size: var(--t-small);
-  line-height: 1.45;
-  color: var(--ink-dim);
-}
-
 .qc-form {
   display: flex;
   gap: var(--sp-8);
+  margin-top: var(--sp-12);
 }
 
 /* The border is mixed from the dim ink rather than taken from `--line`: a text field's

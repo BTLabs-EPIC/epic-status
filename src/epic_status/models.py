@@ -642,8 +642,18 @@ class NetworkSummary(BaseModel):
     rather than obscure by listing the rows separately."""
 
     released_node_version: str | None = None
-    """What upstream has published, from `releases.py`. Stated once for the fleet
-    rather than repeated as a complaint on every lagging row."""
+    """What upstream has published, read from GitHub by `upstream.py`. Stated once for
+    the fleet rather than repeated as a complaint on every lagging row."""
+
+    released_node_url: str | None = None
+    """The release page for exactly that version."""
+
+    released_node_source: str | None = None
+    """Where the number came from: `github`, `seed` (GitHub not yet reached) or
+    `pinned` (set by the operator). Published so a reader can tell a live answer
+    from a fallback."""
+
+    released_wallet_version: str | None = None
 
     nodes_current: int = 0
     """Nodes reporting exactly `released_node_version`. Counted only over nodes that

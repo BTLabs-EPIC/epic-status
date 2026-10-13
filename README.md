@@ -3,7 +3,8 @@
 Health and uptime monitoring for Epic Cash public nodes, Epicbox relays and mining
 pools, on mainnet and floonet.
 One process: an asyncio poller, SQLite, and a server-rendered board. No build step,
-no framework on the client, no external services.
+no framework on the client, no external services on the render path — the one outbound
+call that is not to a monitored host is a background read of GitHub's latest release.
 
 Live instance: <https://status.btlabs.uk>
 
@@ -108,7 +109,9 @@ present.
 | `SITE_URL` | `http://127.0.0.1:13431` | Only used to print the `curl` example. |
 | `PROBER_ID` | `local` | Stamped on every stored check. |
 | `PROBER_REGION` | `unknown` | Shown in the footer. |
-| `RELEASED_NODE_VERSION` | from `releases.py` | What upstream published. Not the highest version seen. |
+| `RELEASED_NODE_VERSION` | from GitHub | Pin the released node version. Set, it is used as given and not fetched. |
+| `RELEASE_CHECK` | `true` | Read the latest node and wallet releases from api.github.com. `false` contacts nothing and keeps the seed. |
+| `RELEASE_CHECK_INTERVAL_S` | `10800` | How often, clamped to 1–6 h. |
 | `SUBMISSIONS_ENABLED` | `true` | `false` removes the form and the endpoint. |
 | `ALLOW_PRIVATE_TARGETS` | `false` | Development only. Read [Security](#security) first. |
 | `KEEP_SUCCESS_DAYS` | `7` | Failures are never pruned. |
@@ -222,13 +225,20 @@ still unpatched weeks later.
 **Version spread is measured against the published release, not against the fleet.**
 An earlier version compared each node to the highest version *seen*, which scores a
 fleet that is uniformly one release behind as unanimous — the metric goes quiet
-exactly when it matters. The released version is a committed constant in
-`releases.py`, mirrored by hand from the developer documentation's `versions.js`, and
-overridable with `RELEASED_NODE_VERSION`. Fetching it from the GitHub API at runtime
-would make a page whose whole claim is "no external services" depend on one. A stale
-constant degrades honestly: the board reports 0 of N on the new release until it is
-bumped, which is what it would say on release day anyway. Only a version *strictly
-older* than the release is marked — a relay answering a protocol newer than the
+exactly when it matters. The released node and wallet versions are read from
+GitHub's `releases/latest` for `EpicCash/epic` and `EpicCash/epic-wallet` every three
+hours, in the background, with `If-None-Match` so an unchanged answer is a 304 that does
+not count against the unauthenticated rate limit. No page waits on it. A failure keeps
+the last good answer, which is stored in SQLite and survives a restart; `releases.py` is
+only the seed for a fresh database. It never moves backwards — GitHub's "latest" is the
+most recently created release, so a maintenance release for an older line would
+otherwise mark everyone on the newer one as current and everyone else wrongly — and a
+tag that is not a plain `vX.Y.Z` (`-rc1`, a draft, a prerelease) is ignored. This
+replaced a committed constant that went stale the day 4.1.0 shipped. `status.json`
+says where the number came from in `network.released_node_source`: `github`, `seed`,
+or `pinned` when `RELEASED_NODE_VERSION` is set, which is used as given and never
+fetched. `RELEASE_CHECK=false` keeps the instance from contacting GitHub at all. Only a
+version *strictly older* than the release is marked — a relay answering a protocol newer than the
 published number is ahead of it, not behind, and a marker that fires on a healthy
 state teaches readers to ignore it.
 
@@ -567,7 +577,8 @@ src/epic_status/
   probes/        node.py (get_tip, get_version, get_header, CORS preflight)
                  epicbox.py (Challenge) · pool.py (per-pool stats adapters)
   geo.py         RDAP provider and location
-  releases.py    the published node/wallet/protocol versions, a committed constant
+  releases.py    seed node/wallet versions and the Epicbox protocol constant
+  upstream.py    the latest node/wallet releases, read from GitHub and remembered
   score.py       three states, fork detection, the 0–100 score
   chain.py       recent canonical headers, reorg detection, the chain panel
   events.py      the incident log: open, settle, close

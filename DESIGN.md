@@ -59,7 +59,7 @@ open, and opens itself if a fault appears. With JavaScript off every group is op
 **The quick node check sits beside the verdict.** On a wide screen it takes the right half
 of the hero, which was empty; below 1100px it follows the verdict, facts and freshness line
 and precedes the node list — network first, then "is it my node", then the list. Closed it
-is a title, one line and a field; it opens downward with the result, closes on × or Escape,
+is a title, a field and a button, with "node address or IP" as the only instruction; it opens downward with the result, closes on × or Escape,
 and works as a plain form post with JavaScript off.
 
 ## Colour

@@ -100,8 +100,18 @@ class Settings(BaseSettings):
 
     released_node_version: str = releases.NODE
     """What upstream has published, which is not the same fact as the highest
-    version the fleet happens to be running — see `releases.py`. Env-overridable so
-    an operator tracking a different line does not have to patch the source."""
+    version the fleet happens to be running — see `upstream.py`. Read from GitHub's
+    releases at run time; this default is only the seed for a fresh database. Set it
+    in the environment and it is a pin instead: used as given, never fetched."""
+
+    release_check: bool = True
+    """Read the latest node and wallet releases from api.github.com. The one outbound
+    request this service makes that is not to a monitored host; `false` keeps the seed
+    (or a pin) and contacts nothing."""
+
+    release_check_interval_s: float = 10800.0
+    """How often to ask, clamped to one to six hours. Unchanged answers are 304s,
+    which GitHub does not count against the unauthenticated rate limit."""
 
     own_node_url: str | None = None
     """A node this instance operates. The board may time one request to it from

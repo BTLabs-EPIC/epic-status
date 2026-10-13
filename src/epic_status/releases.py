@@ -1,4 +1,4 @@
-"""What Epic has actually released.
+"""What Epic has released, as committed seeds.
 
 The board needs two different facts about versions and an earlier version of this
 code conflated them:
@@ -10,26 +10,15 @@ code conflated them:
 * **released** — what upstream has actually published. Not derivable from probing
   nodes at all, because a release nobody has installed yet is invisible to the fleet.
 
-This module is the second one, and it is a committed constant on purpose. Fetching
-the GitHub releases API at runtime would make a page whose entire claim is "no
-external services" depend on one, and a status page that cannot render because
-api.github.com is rate-limiting is a worse failure than a version string going stale.
+The node and wallet values here are **seeds**, not the source of truth. `upstream.py`
+reads the latest releases from GitHub in the background and remembers the last good
+answer in SQLite; these constants are only what a fresh database starts from, and a
+floor the published value never drops below. They used to be the source of truth,
+mirrored by hand from devhub's `versions.js`, and went stale the day 4.1.0 shipped.
+Bumping them on release is still good hygiene, not a requirement.
 
-Mirrored by hand from `epic-devhub/site/src/data/versions.js`, which is the developer
-documentation's single source of truth for the same values. Keep the two in step: bump
-this on release, in the same commit that bumps devhub, and nothing else here changes.
-`EPIC_STATUS_RELEASED_NODE_VERSION` overrides the node value for an operator tracking
-a different line, so a fork does not have to patch the source.
-
-`NODE` mirrors devhub's `node`, not its `nodeBinaries`. Those two differ whenever a
-release ships without attached binaries, as v4.0.4 did — its release job failed to
-create the assets. That distinction matters to a downloads page and not at all here,
-because this value is only ever compared against what a running node reports, and a
-node built from the v4.0.4 tag reports 4.0.4 whether or not a tarball exists for it.
-
-A stale constant degrades honestly. `nodes_current` simply reports 0 of N on the new
-release until this is bumped, which reads as "nobody has upgraded yet" — true, and the
-same thing the board would say on the day a release actually lands.
+`EPICBOX_PROTOCOL` is still a constant: the relay repository publishes no GitHub
+releases, so there is nothing to read.
 """
 
 from __future__ import annotations

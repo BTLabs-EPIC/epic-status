@@ -253,6 +253,20 @@ CREATE TABLE IF NOT EXISTS event_occurrences (
 CREATE INDEX IF NOT EXISTS idx_event_occurrences_event
     ON event_occurrences (event_id, started_at DESC);
 
+-- The latest release GitHub reported per repository ('node', 'wallet'), so a restart
+-- during a GitHub outage keeps the last good answer instead of falling back to the
+-- committed seed. Derived state, cheap to lose: deleting a row only means one more
+-- request. See upstream.py.
+CREATE TABLE IF NOT EXISTS upstream_releases (
+    repo        TEXT    PRIMARY KEY,
+    version     TEXT    NOT NULL,
+    tag         TEXT    NOT NULL,
+    etag        TEXT,
+    fetched_at  TEXT,
+    checked_at  TEXT,
+    error       TEXT
+);
+
 -- Pending public submissions. Separate from `targets` on purpose: nothing here is
 -- ever probed on the main sweep, so a submitted host cannot become a poller
 -- amplifier before it has been validated.
@@ -1346,6 +1360,38 @@ class Database:
         self.conn.execute(
             "UPDATE events SET detail = ? WHERE id = ?", (detail, event_id)
         )
+
+    def load_upstream_releases(self) -> dict[str, sqlite3.Row]:
+        rows = self.conn.execute("SELECT * FROM upstream_releases").fetchall()
+        return {str(row["repo"]): row for row in rows}
+
+    def save_upstream_release(
+        self,
+        repo: str,
+        *,
+        version: str,
+        tag: str,
+        etag: str | None,
+        fetched_at: datetime | None,
+        checked_at: datetime | None,
+        error: str | None,
+    ) -> None:
+        def iso(value: datetime | None) -> str | None:
+            return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ") if value else None
+
+        with self.tx() as conn:
+            conn.execute(
+                """
+                INSERT INTO upstream_releases
+                    (repo, version, tag, etag, fetched_at, checked_at, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(repo) DO UPDATE SET
+                    version = excluded.version, tag = excluded.tag, etag = excluded.etag,
+                    fetched_at = excluded.fetched_at, checked_at = excluded.checked_at,
+                    error = excluded.error
+                """,
+                (repo, version, tag, etag, iso(fetched_at), iso(checked_at), error),
+            )
 
     def ongoing_events(self) -> list[tuple[Event, int | None]]:
         """Every open event, with its target id, for the tracker to resume after a

@@ -642,8 +642,12 @@ def _base_context(
             or settings.released_node_version
             or None
         ),
-        "released_node_url": releases.NODE_URL,
-        "released_wallet_version": releases.WALLET,
+        "released_node_url": (
+            (snapshot.network.released_node_url if snapshot else None) or releases.NODE_URL
+        ),
+        "released_wallet_version": (
+            (snapshot.network.released_wallet_version if snapshot else None) or releases.WALLET
+        ),
         "released_wallet_url": releases.WALLET_URL,
         "epicbox_protocol": releases.EPICBOX_PROTOCOL,
         # The day count at which the TLS column grows its amber marker. Config, not a
