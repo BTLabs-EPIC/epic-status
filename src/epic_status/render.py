@@ -141,6 +141,9 @@ def _environment() -> Environment:
     env.filters["rfc3339"] = _rfc3339
     env.filters["duration"] = _duration
     env.filters["event_label"] = lambda k: _EVENT_LABEL.get(k, str(k))
+    env.filters["event_plural"] = lambda k: _EVENT_PLURAL.get(k, "occurrences")
+    env.filters["event_active"] = lambda k: _EVENT_ACTIVE.get(k)
+    env.filters["event_latest"] = _event_latest
     env.filters["state_label"] = lambda s: _STATE_LABEL.get(s, "Unknown")
     env.filters["flag"] = lambda c: Markup(flag(c))
     env.filters["flag_title"] = flag_title
@@ -321,6 +324,33 @@ _EVENT_LABEL = {
     EventKind.STALL: "Chain stalled",
     EventKind.CERT_EXPIRING: "Certificate expiring",
 }
+
+#: What several of one kind are called, for "7 outages in 24 h".
+_EVENT_PLURAL = {
+    EventKind.DOWN: "outages",
+    EventKind.REORG: "reorgs",
+    EventKind.FORK: "fork alerts",
+    EventKind.STALL: "stalls",
+    EventKind.CERT_EXPIRING: "warnings",
+}
+
+#: How the summed active time reads, for "14m 05s down in total". Absent for kinds whose
+#: duration means nothing: a reorg is an instant, and a certificate warning lasts until
+#: someone renews it.
+_EVENT_ACTIVE = {
+    EventKind.DOWN: "down",
+    EventKind.FORK: "forked",
+    EventKind.STALL: "stalled",
+}
+
+
+def _event_latest(event: Event) -> str:
+    """When the latest occurrence began, as briefly as is unambiguous: a time of day
+    when it is the same UTC day as the first, the full `when` otherwise."""
+    latest = event.latest_start.astimezone(UTC)
+    if latest.date() == event.started_at.astimezone(UTC).date():
+        return latest.strftime("%H:%M UTC")
+    return _when(latest)
 
 
 def _epoch_ms(value: datetime | None) -> str:
@@ -678,14 +708,14 @@ def render_feed(
 
     One entry per incident, keyed by its database id, so a feed reader shows an outage
     once and then updates the same entry when it resolves rather than posting twice.
+    A repeat inside the dedupe window is the same entry again, with a count and a newer
+    `<updated>`, so a flapping host is one line in a reader rather than one per drop.
     This is the alerting path the project can offer without sending anything itself:
     a reader, or a feed-to-chat bot, pulls it.
     """
     base = settings.site_url.rstrip("/")
     host = base.split("://", 1)[-1].split("/", 1)[0]
-    updated = max(
-        ((e.ended_at or e.started_at) for e in events), default=datetime.now(UTC)
-    )
+    updated = max((e.updated_at for e in events), default=datetime.now(UTC))
     context = {
         "site_name": settings.site_name,
         "chain": chain,
