@@ -45,7 +45,7 @@
     <label class="sr-only" for="qc-input">Node address</label>
     <input id="qc-input" class="qc-input" name="address" type="text" inputmode="url"
            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
-           maxlength="253" placeholder="node.example.org:3413" required
+           maxlength="253" placeholder="node.example.org" required
            value="{{ qc_input }}" aria-describedby="qc-lede"
            {% if qc and qc.error_kind == 'input' %}aria-invalid="true"{% endif %} />
     <button type="submit" class="qc-go">

@@ -4644,3 +4644,17 @@ input[data-state='failed'] {
 .sev-bad .event-count b {
   color: var(--danger-ink);
 }
+
+/* ------------------------------------------------------------- 360px phones
+ *
+ * Measured at 360: "Public nodes", "1 of 3 online" and "latest: 4.0.4" need about 390px on
+ * one line and the shell gives 336, so the version wrapped and sat alone at the right edge,
+ * reading as stray text. Below 400px it takes its own line, under the heading, on the left
+ * where the heading's other facts start. */
+@media (max-width: 400px) {
+  .group-head .group-count {
+    flex-basis: 100%;
+    margin-left: 0;
+    padding: var(--sp-2) 0 var(--sp-8);
+  }
+}
