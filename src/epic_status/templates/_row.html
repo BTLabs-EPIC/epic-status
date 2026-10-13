@@ -20,7 +20,7 @@
 
 {% macro row(status, kind, tip) %}
 {% set t = status.target %}
-<li class="row state-{{ status.state.value }}" data-slug="{{ t.slug }}">
+<li class="row state-{{ status.state.value }}" id="row-{{ t.slug }}" data-slug="{{ t.slug }}">
   <span
     class="row-dot dot dot-{{ status.state.value }}{% if status.state == State.HEALTHY %} is-live{% endif %}"
     role="img"
@@ -151,15 +151,20 @@
 
     {{ where(t) }}
     {{ latency(status, t) }}
-  </span>
 
-  {#
-    24h uptime. The one number that separates "up right now" from "reliable", and the
-    reader choosing which endpoint to point a wallet at wants both.
-  #}
-  <span class="row-up" data-field="up24" data-slug="{{ t.slug }}"
-        data-sort="{{ status.uptime_24h if status.uptime_24h is not none else -1 }}">
-    <em>24h</em>{{ status.uptime_24h | pct }}
+    {#
+      24h uptime. The one number that separates "up right now" from "reliable", and the
+      reader choosing which endpoint to point a wallet at wants both.
+
+      Inside `.row-meta` so that on a phone it is the fourth cell of the readout line,
+      aligned with the same cell on every other row. On a desktop `.row-meta` is
+      `display: contents`, so this is still a direct grid item of the row and lands in
+      its own column exactly as before.
+    #}
+    <span class="row-up" data-field="up24" data-slug="{{ t.slug }}"
+          data-sort="{{ status.uptime_24h if status.uptime_24h is not none else -1 }}">
+      <em>24h</em>{{ status.uptime_24h | pct }}
+    </span>
   </span>
 
   {#
@@ -307,6 +312,24 @@
         <dd><code>{{ t.p2p }}</code></dd>
       </div>
       {% endif %}
+
+      {#
+        Two facts that are columns in the table and leave the row on a phone, where the row
+        keeps only what a reader compares down the list: the height (the hero already gives
+        the tip, and the row's "vs tip" says how far off this one is) and the location.
+        `d-narrow` hides them again on a desktop, where the table shows them, so the panel
+        still never repeats its row.
+      #}
+      {% if kind == Kind.NODE %}
+      <div class="d-narrow">
+        <dt>height</dt>
+        <dd>{{ status.height | thousands }}</dd>
+      </div>
+      {% endif %}
+      <div class="d-narrow">
+        <dt>location</dt>
+        <dd class="d-where">{{ t.geo.display_country | flag }}<span>{{ t.geo.display_country | flag_title }}</span></dd>
+      </div>
 
       {% if kind == Kind.NODE and status.tip_hash %}
       <div>

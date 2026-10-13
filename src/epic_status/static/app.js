@@ -576,6 +576,9 @@
         setText('nodes', net.nodes_healthy);
         setText('epicbox', net.epicbox_healthy);
         setText('pools', net.pools_healthy);
+        setSum('nodes', net.nodes_healthy, net.nodes_total);
+        setSum('epicbox', net.epicbox_healthy, net.epicbox_total);
+        setSum('pools', net.pools_healthy, net.pools_total);
 
         lastOk = Date.now();
         pulse();
@@ -595,6 +598,7 @@
           .concat(data.epicbox || [])
           .concat(data.pools || []);
         for (var i = 0; i < rows.length; i++) patchRow(rows[i], net);
+        openTroubledGroups();
 
         /* The strip states the released version once. Its count still has to move,
            because a node upgrading is exactly the change this line exists to show. */
@@ -1111,4 +1115,316 @@
       else paint(out, parts, 'd-ok');
     });
   });
+
+
+  /* ---------------------------------------------------------- group folds
+   *
+   * Relays and pools fold on a phone, and only when there is nothing in them to see: every
+   * host online. The heading becomes a button here rather than in the template so that a
+   * desktop, and a phone with JavaScript off, get a plain heading over an open group —
+   * the correct page, with nothing inert in it pretending to be a control.
+   *
+   * A fault opens its group: the poll re-checks after every update. A reader who opened a
+   * group by hand is never folded back on them; folding only happens on load and on
+   * narrowing the window.
+   */
+  var NARROW = window.matchMedia ? window.matchMedia('(max-width: 899px)') : null;
+  var CHEV =
+    '<svg class="chev" width="11" height="7" viewBox="0 0 11 7" aria-hidden="true" fill="none"' +
+    ' stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M1.2 1.6 5.5 5.5 9.8 1.6" /></svg>';
+  var foldGroups = [].slice.call(document.querySelectorAll('.group[data-fold]'));
+
+  function isNarrow() {
+    return !!(NARROW && NARROW.matches);
+  }
+
+  function groupCalm(group) {
+    return !!group.querySelector('.row') && !group.querySelector('.row:not(.state-healthy)');
+  }
+
+  function foldButton(group) {
+    var h2 = group.querySelector('.group-head h2');
+    var body = group.querySelector('.group-body');
+    if (!h2 || !body) return null;
+    var btn = h2.querySelector('.group-fold');
+    if (btn) return btn;
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'group-fold';
+    btn.setAttribute('aria-expanded', 'true');
+    btn.setAttribute('aria-controls', body.id);
+    while (h2.firstChild) btn.appendChild(h2.firstChild);
+    /* A constant, not data: the only markup this file ever builds from a string. */
+    btn.insertAdjacentHTML('beforeend', CHEV);
+    h2.appendChild(btn);
+    btn.addEventListener('click', function () {
+      setFold(group, btn.getAttribute('aria-expanded') === 'true');
+    });
+    return btn;
+  }
+
+  function unwrapFold(group) {
+    var btn = group.querySelector('.group-fold');
+    if (!btn) return;
+    var h2 = btn.parentNode;
+    var chev = btn.querySelector('.chev');
+    if (chev) btn.removeChild(chev);
+    while (btn.firstChild) h2.insertBefore(btn.firstChild, btn);
+    h2.removeChild(btn);
+  }
+
+  function setFold(group, folded) {
+    var btn = foldButton(group);
+    var body = group.querySelector('.group-body');
+    if (!btn || !body) return;
+    btn.setAttribute('aria-expanded', folded ? 'false' : 'true');
+    body.hidden = folded;
+    group.classList.toggle('is-folded', folded);
+    if (folded && openRow && group.contains(openRow)) {
+      collapse(openRow);
+      openRow = null;
+    }
+  }
+
+  function arrangeFolds() {
+    for (var i = 0; i < foldGroups.length; i++) {
+      var group = foldGroups[i];
+      if (isNarrow()) {
+        foldButton(group);
+        setFold(group, groupCalm(group));
+      } else {
+        setFold(group, false);
+        unwrapFold(group);
+        group.classList.remove('is-folded');
+      }
+    }
+  }
+
+  /* After every poll: a group with a fault in it opens. Never the other way. */
+  function openTroubledGroups() {
+    for (var i = 0; i < foldGroups.length; i++) {
+      var group = foldGroups[i];
+      if (group.classList.contains('is-folded') && !groupCalm(group)) setFold(group, false);
+    }
+  }
+
+  /* Tapping anywhere on a folded heading line is a tap on its button — the count beside
+     the title is part of the same target on a phone. Links keep being links. */
+  document.addEventListener('click', function (event) {
+    if (!isNarrow()) return;
+    var head = event.target.closest('.group[data-fold] .group-head');
+    if (!head || event.target.closest('a, button')) return;
+    var btn = head.querySelector('.group-fold');
+    if (btn) btn.click();
+  });
+
+  arrangeFolds();
+  if (NARROW) {
+    var onWidth = function () {
+      arrangeFolds();
+    };
+    if (NARROW.addEventListener) NARROW.addEventListener('change', onWidth);
+    else if (NARROW.addListener) NARROW.addListener(onWidth);
+  }
+
+  /* The count in each group's heading, kept in step with the rows under it. */
+  function setSum(key, healthy, total) {
+    var el = document.querySelector('[data-sum="' + key + '"]');
+    if (!el || healthy === null || healthy === undefined) return;
+    var b = el.querySelector('b');
+    if (b) b.textContent = String(healthy);
+    var known = parseInt(el.getAttribute('data-total'), 10);
+    var of = total !== null && total !== undefined ? total : known;
+    el.classList.toggle('is-short', healthy < of);
+  }
+
+
+  /* ---------------------------------------------------------- quick check
+   *
+   * The form posts to /check and works without any of this: the server renders the whole
+   * board again with the box open. Here the same post asks for only the result fragment,
+   * which the server renders from the same template, and the box opens around it. Nothing
+   * is formatted twice, and nothing from the response is built into markup here — the
+   * fragment arrives already escaped by the template engine that wrote the page.
+   *
+   * Escape closes the result and keeps the address, so it can be corrected and checked
+   * again; the × closes it and clears the address. Neither reaches the row-panel handler
+   * further up, which would otherwise fold a row away under the same key press.
+   */
+  var QC_MS = 260;
+
+  (function (box) {
+    if (!box) return;
+    var form = box.querySelector('.qc-form');
+    var input = box.querySelector('.qc-input');
+    var go = box.querySelector('.qc-go');
+    var result = box.querySelector('.qc-result');
+    var inner = box.querySelector('.qc-result-in');
+    var close = box.querySelector('.qc-close');
+    if (!form || !input || !result || !inner) return;
+    var busy = false;
+    var timer = 0;
+
+    function reveal() {
+      window.clearTimeout(timer);
+      result.hidden = false;
+      box.classList.add('is-open');
+      if (close) close.hidden = false;
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          result.classList.add('is-open');
+          /* On a phone the result can open below the fold. Bring its top edge into view,
+             no further — the field the reader typed into should stay on screen too. */
+          var rect = result.getBoundingClientRect();
+          if (rect.bottom > window.innerHeight) {
+            result.scrollIntoView({ block: 'nearest', behavior: prefersStill() ? 'auto' : 'smooth' });
+          }
+        });
+      });
+    }
+
+    function shut(clear) {
+      result.classList.remove('is-open');
+      box.classList.remove('is-open');
+      if (close) close.hidden = true;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(function () {
+        result.hidden = true;
+        inner.textContent = '';
+      }, QC_MS);
+      if (clear) {
+        input.value = '';
+        input.removeAttribute('aria-invalid');
+      }
+      input.focus();
+    }
+
+    /* Only for failures that never reached the server, so there is no fragment to show.
+       Built with textContent, like every other message this file writes. */
+    function localMessage(tone, word, text) {
+      var out = document.createElement('div');
+      out.className = 'qc-out tone-' + tone;
+      var p = document.createElement('p');
+      p.className = 'qc-verdict';
+      var dot = document.createElement('span');
+      dot.className = 'dot qc-dot';
+      dot.setAttribute('aria-hidden', 'true');
+      var b = document.createElement('b');
+      b.className = 'qc-word';
+      b.textContent = word;
+      var line = document.createElement('span');
+      line.className = 'qc-headline';
+      line.textContent = text;
+      p.appendChild(dot);
+      p.appendChild(b);
+      p.appendChild(line);
+      out.appendChild(p);
+      return out;
+    }
+
+    function show(content) {
+      inner.textContent = '';
+      if (typeof content === 'string') inner.innerHTML = content;
+      else inner.appendChild(content);
+      var out = inner.querySelector('.qc-out');
+      if (out && out.getAttribute('data-error') === 'input') input.setAttribute('aria-invalid', 'true');
+      else input.removeAttribute('aria-invalid');
+      reveal();
+    }
+
+    function setBusy(on) {
+      busy = on;
+      box.classList.toggle('is-busy', on);
+      if (on) box.setAttribute('aria-busy', 'true');
+      else box.removeAttribute('aria-busy');
+      /* aria-disabled, not disabled: disabling the button that has focus throws focus to
+         the document body, and a keyboard user would land at the top of the page. */
+      if (go) go.setAttribute('aria-disabled', on ? 'true' : 'false');
+    }
+
+    function run(address, defaults) {
+      if (busy) return;
+      address = (address || '').trim();
+      if (!address) {
+        show(localMessage('info', 'Not checked', 'Paste a node address first — a hostname or an IP, with or without a port.'));
+        input.setAttribute('aria-invalid', 'true');
+        input.focus();
+        return;
+      }
+      var body = new URLSearchParams();
+      body.set('address', address);
+      if (defaults) body.set('defaults', '1');
+      setBusy(true);
+      fetch('/check', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          accept: 'text/html',
+          'x-quickcheck': 'fragment'
+        },
+        body: body.toString()
+      })
+        .then(function (response) {
+          /* 429 carries a rendered result too: the rate-limit message is an answer. */
+          if (!response.ok && response.status !== 429) throw new Error('HTTP ' + response.status);
+          return response.text();
+        })
+        .then(function (html) {
+          setBusy(false);
+          show(html);
+        })
+        .catch(function () {
+          setBusy(false);
+          show(localMessage('info', 'Not checked', 'This page could not reach its own server. Check your connection and try again.'));
+        });
+    }
+
+    box.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var target = event.target;
+      if (target.classList.contains('qc-retry')) {
+        var hidden = target.querySelector('input[name="address"]');
+        run(hidden ? hidden.value : input.value, true);
+        return;
+      }
+      run(input.value, false);
+    });
+
+    if (close) {
+      close.addEventListener('click', function () {
+        shut(true);
+      });
+    }
+
+    input.addEventListener('input', function () {
+      input.removeAttribute('aria-invalid');
+    });
+
+    box.addEventListener('keydown', function (event) {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      if (box.classList.contains('is-open')) shut(false);
+      else if (input.value) input.value = '';
+    });
+
+    /* "On this board": go to the row and open it, unfolding its group first. */
+    box.addEventListener('click', function (event) {
+      var link = event.target.closest('[data-qc-listed]');
+      if (!link) return;
+      var row = document.getElementById('row-' + link.getAttribute('data-qc-listed'));
+      if (!row) return;
+      event.preventDefault();
+      var group = row.closest('.group[data-fold]');
+      if (group && group.classList.contains('is-folded')) setFold(group, false);
+      if (!row.classList.contains('is-open')) toggleRow(row);
+      row.scrollIntoView({ block: 'start', behavior: prefersStill() ? 'auto' : 'smooth' });
+      var toggle = row.querySelector('.row-toggle');
+      if (toggle) toggle.focus({ preventScroll: true });
+    });
+
+    /* The server rendered a result into the page (the no-JavaScript path, or a reload of
+       one): its region is already open; the close control just needs wiring, done above. */
+  })(document.querySelector('[data-qc]'));
 })();

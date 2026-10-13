@@ -635,13 +635,32 @@ def render_board(
     settings: Settings,
     chain: Chain = Chain.MAINNET,
     chains: Sequence[Chain] = (),
+    qc: Any = None,
+    qc_input: str = "",
 ) -> str:
+    """The board. `qc` is a quick-check result to render already open — the no-JavaScript
+    path, where the check is a form post and the answer is the whole page again."""
     context = _base_context(snapshot, settings, chain=chain, chains=chains, page="board")
     context["countries"] = _country_options()
     context["nodes"] = snapshot.nodes if snapshot else []
     context["relays"] = snapshot.epicbox if snapshot else []
     context["pools"] = snapshot.pools if snapshot else []
+    context["quickcheck_enabled"] = getattr(settings, "quickcheck_enabled", True)
+    context["qc"] = qc
+    context["qc_input"] = qc_input
     return _environment().get_template("board.html").render(**context)
+
+
+def render_quickcheck_result(*, result: Any, settings: Settings) -> str:
+    """Only the result of a quick check, for app.js to swap into the open box.
+
+    Rendered by the same macro the full page uses, so the scripted path and the form path
+    cannot drift into describing one result two ways.
+    """
+    context = _base_context(None, settings, page="board")
+    template = _environment().get_template("_quickcheck.html")
+    module = template.make_module(context)
+    return str(module.result(result))  # type: ignore[attr-defined]
 
 
 def render_history(

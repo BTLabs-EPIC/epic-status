@@ -3,6 +3,7 @@
    unless the import asks for it, and these macros use Kind, State, prober_id and
    lag_note. Without it the page renders as a 500 rather than degrading. #}
 {% import "_row.html" as r with context %}
+{% import "_quickcheck.html" as qcm with context %}
 {% set page = 'board' %}
 {# No title override: the base title is already "Epic Cash Status — Degraded", which is
    what a tab wants. The headline sentence belongs on the page, not in 20 characters of
@@ -17,7 +18,15 @@
   more quietly than the block heights underneath. One word carries the state and gets
   the only saturated colour on a healthy page; everything else here is neutral.
 #}
-<section class="hero tone-{{ verdict.tone }}" aria-labelledby="verdict">
+<section class="hero tone-{{ verdict.tone }}{% if quickcheck_enabled %} has-qc{% endif %}" aria-labelledby="verdict">
+  {#
+    The verdict and its facts in one column, the quick check in a second beside it on a wide
+    screen. On a desktop the right half of the hero was empty — a 52px sentence is short — and
+    a tool that answers "is it my node or the network" belongs next to the answer about the
+    network. On a phone there is one column, and the check follows the status it is compared
+    against, before the list of nodes.
+  #}
+  <div class="hero-main">
   <h1 class="hero-answer" id="verdict">
     {{ verdict.lead }}{% if verdict.accent %} <em>{{ verdict.accent }}</em>.{% endif %}
   </h1>
@@ -103,11 +112,30 @@
     <span class="sr-only" data-field="live-sr" role="status" aria-live="polite"></span>
   </p>
   {% endif %}
+  </div>
+
+  {% if quickcheck_enabled %}{{ qcm.widget(qc, qc_input) }}{% endif %}
 </section>
+
+{#
+  A count of what is answering, in the group's own heading. On a desktop the hero states the
+  same three counts beside the chain tip and the table states each host's state on its row,
+  so this is hidden there; on a phone it is the line that lets a folded group say whether it
+  needs opening. `data-sum` is how the poll finds it — `data-field` is looked up with
+  `querySelector`, which only ever finds the first match, and the hero already owns those.
+#}
+{% macro gsum(key, healthy, total) %}
+{% if total %}
+<span class="group-sum{% if healthy < total %} is-short{% endif %}" data-sum="{{ key }}" data-total="{{ total }}">
+  <b>{{ healthy }}</b> of {{ total }} online
+</span>
+{% endif %}
+{% endmacro %}
 
 <section class="group group-node group-primary">
   <div class="group-head">
     <h2>Public nodes</h2>
+    {% if network %}{{ gsum('nodes', network.nodes_healthy, network.nodes_total) }}{% endif %}
     {#
       The released version, and nothing else. It used to add "is current" and a count of
       how many nodes were running it — both readable from the Version column two lines
@@ -133,9 +161,17 @@
   {% endif %}
 </section>
 
-<section class="group group-epicbox">
+{#
+  Relays and pools are secondary groups, and on a phone they fold — but only when every host
+  in them is online, and only once JavaScript has run. `data-fold` marks them as foldable;
+  app.js turns the heading into the button and closes the group if nothing in it needs
+  attention. A group with a fault in it stays open, and opens itself if a fault appears
+  while the page is up. With JavaScript off every group is open, which is the correct page.
+#}
+<section class="group group-epicbox" data-fold>
   <div class="group-head">
     <h2>Epicbox relays</h2>
+    {% if network %}{{ gsum('epicbox', network.epicbox_healthy, network.epicbox_total) }}{% endif %}
     {#
       Linked to the relay repository, not to a release tag: epic-epicbox-docker publishes no
       tags, and pointing this at the node's release page would send a reader to the wrong
@@ -145,6 +181,7 @@
       latest: <a class="rel" href="{{ epicbox_url }}" rel="noreferrer">{{ epicbox_protocol }}</a>
     </span>
   </div>
+  <div class="group-body" id="gb-epicbox">
   {% if relays %}
   <ul class="rows">
     {{ r.head(Kind.EPICBOX) }}
@@ -153,6 +190,7 @@
   {% else %}
   <p class="prose">No relays yet. <a href="/add">Add one</a> and it appears once the handshake succeeds.</p>
   {% endif %}
+  </div>
 </section>
 
 {#
@@ -168,10 +206,12 @@
   "special-case floonet". A pool on floonet would appear here without a code change.
 #}
 {% if pools or chain == Chain.MAINNET %}
-<section class="group group-pool">
+<section class="group group-pool" data-fold>
   <div class="group-head">
     <h2>Mining pools</h2>
+    {% if network %}{{ gsum('pools', network.pools_healthy, network.pools_total) }}{% endif %}
   </div>
+  <div class="group-body" id="gb-pool">
   {% if pools %}
   <ul class="rows">
     {{ r.head(Kind.POOL) }}
@@ -185,6 +225,7 @@
   {% else %}
   <p class="prose">No pools yet. Every pool's stats API is its own shape, so adding one is a code change.</p>
   {% endif %}
+  </div>
 </section>
 {% endif %}
 

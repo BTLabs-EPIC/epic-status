@@ -72,21 +72,28 @@
           <a href="/add"{% if page == 'add' %} aria-current="page"{% endif %}>Request a server</a>
           {% endif %}
           <a href="/api"{% if page == 'api' %} aria-current="page"{% endif %}>API</a>
-          <button
-            type="button"
-            class="theme-toggle"
-            id="theme-toggle"
-            aria-label="Switch between dark and light"
-            title="Switch between dark and light"
-          >
-            {# Inline SVG rather than an emoji or an icon font: this host's font set
-               would render a rare glyph as a box, and a control that needs a rare
-               glyph is fragile on every platform. #}
-            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
-              <path d="M8 1a7 7 0 1 0 7 7h-2.2A4.8 4.8 0 1 1 8 3.2V1Z" />
-            </svg>
-          </button>
         </nav>
+
+        {#
+          Outside `.topnav`, not inside it. On a phone the bar is two rows — the brand, the
+          network and this control on the first, the four sections as a tab strip on the
+          second — and a control inside the nav could not be placed on the first row. On a
+          desktop it still sits at the far end of the single row, where it always was.
+        #}
+        <button
+          type="button"
+          class="theme-toggle"
+          id="theme-toggle"
+          aria-label="Switch between dark and light"
+          title="Switch between dark and light"
+        >
+          {# Inline SVG rather than an emoji or an icon font: this host's font set
+             would render a rare glyph as a box, and a control that needs a rare
+             glyph is fragile on every platform. #}
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+            <path d="M8 1a7 7 0 1 0 7 7h-2.2A4.8 4.8 0 1 1 8 3.2V1Z" />
+          </svg>
+        </button>
       </div>
     </header>
 

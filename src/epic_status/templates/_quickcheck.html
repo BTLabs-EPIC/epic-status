@@ -1,0 +1,209 @@
+{#
+  The quick node check: one address in, one probe out, the answer in the same box.
+
+  Closed it is three things — a title, one line saying what it does, a field and a button —
+  because it sits beside the verdict on a desktop and between the verdict and the node list
+  on a phone, and in both places the board is the main content. It opens downward with
+  the result and closes again on the × or Escape.
+
+  The form is a real form posting to /check, so the check works with JavaScript off: the
+  server renders the whole board with this box already open and the result inside it.
+  app.js intercepts the same submit, asks for only the result fragment, and animates it in.
+  One template renders the result in both cases, so the two paths cannot disagree about
+  what a result says.
+
+  Nothing here runs on page load. The server contacts the address only when the reader
+  presses Check, and the page states where the probe comes from, because the latency in
+  the result is measured from that server and not from the reader.
+#}
+
+{% macro widget(qc, qc_input) %}
+<section class="qc{% if qc %} is-open{% endif %}" id="quick-check" aria-labelledby="qc-title" data-qc>
+  <div class="qc-head">
+    <h2 class="qc-title" id="qc-title">Quick node check</h2>
+    {#
+      Present from the start but hidden until there is something to clear. A real <button>
+      with a name, not an × glyph in a span: the glyph is drawn in SVG because the
+      multiplication sign is exactly the kind of character a minimal font set boxes.
+    #}
+    <button type="button" class="qc-close" aria-label="Close the check and clear the address"
+            title="Close (Esc)"{% if not qc %} hidden{% endif %}>
+      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none"
+           stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <path d="M2 2l8 8M10 2l-8 8" />
+      </svg>
+    </button>
+  </div>
+  <p class="qc-lede" id="qc-lede">Paste a node address. No port? We try the API on 3413, then the peer port on 3414.</p>
+
+  <form class="qc-form" method="post" action="/check#quick-check" novalidate>
+    <label class="sr-only" for="qc-input">Node address</label>
+    <input id="qc-input" class="qc-input" name="address" type="text" inputmode="url"
+           autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+           maxlength="253" placeholder="node.example.org:3413" required
+           value="{{ qc_input }}" aria-describedby="qc-lede"
+           {% if qc and qc.error_kind == 'input' %}aria-invalid="true"{% endif %} />
+    <button type="submit" class="qc-go">
+      <span class="qc-go-idle">Check</span>
+      <span class="qc-go-busy" aria-hidden="true">Checking</span>
+    </button>
+  </form>
+
+  {#
+    The result region. `aria-live` on the container that persists, not on the fragment
+    that is swapped in: a live region added to the page together with its content is not
+    announced by most screen readers, because nothing changed inside a region they were
+    already watching.
+  #}
+  <div class="qc-result{% if qc %} is-open{% endif %}" id="qc-result" aria-live="polite"{% if not qc %} hidden{% endif %}>
+    <div class="qc-result-in">{% if qc %}{{ result(qc) }}{% endif %}</div>
+  </div>
+</section>
+{% endmacro %}
+
+
+{#
+  One result. Every line is conditional on there being something true to say, and every
+  state is a word as well as a colour: a reader comparing this to the board has to be able
+  to do it in a monochrome screenshot pasted into a chat.
+#}
+{% macro result(r) %}
+{% set word = {'ok': 'Answering', 'warn': 'Limited', 'bad': 'No answer', 'info': 'Not checked'}[r.tone] %}
+<div class="qc-out tone-{{ r.tone }}" data-tone="{{ r.tone }}"{% if r.error_kind %} data-error="{{ r.error_kind }}"{% endif %}>
+  <p class="qc-verdict">
+    <span class="dot qc-dot" aria-hidden="true"></span>
+    <b class="qc-word">{{ word }}</b>
+    <span class="qc-headline">{{ r.headline }}</span>
+  </p>
+
+  {% if r.error_kind %}
+  {#
+    Refused before anything was contacted — bad input, an address that is not public, a
+    name that does not resolve, or the rate limit. The sentence is the whole answer.
+  #}
+  {% if r.error and r.error != r.headline %}<p class="qc-msg">{{ r.error }}</p>{% endif %}
+  {% else %}
+  <dl class="qc-facts">
+    {% if r.api and r.api.attempted %}
+    {% set a = r.api %}
+    <div class="qc-fact{% if not a.ok %} is-off{% endif %}">
+      <dt>API <span class="qc-port">{{ a.port }}</span></dt>
+      <dd>
+        {%- if a.ok -%}
+          <b>answered</b>{% if a.latency_ms is not none %}<i>·</i>{{ a.latency_ms | ms }}{% endif %}{% if a.scheme %}<i>·</i>{{ a.scheme }}{% endif %}
+        {%- elif a.outcome == 'api_secret' -%}
+          <b>needs an API secret</b><i>·</i>HTTP 401
+        {%- elif a.outcome == 'rate_limited' -%}
+          <b>rate limited</b><i>·</i>HTTP 429
+        {%- elif a.outcome == 'http_error' -%}
+          <b>error</b>{% if a.http_status %}<i>·</i>HTTP {{ a.http_status }}{% endif %}
+        {%- elif a.outcome == 'not_epic' -%}
+          <b>answered, but not as an Epic node</b>
+        {%- elif a.outcome == 'refused' -%}
+          <b>closed</b><i>·</i>connection refused
+        {%- elif a.outcome == 'timeout' -%}
+          <b>no answer</b><i>·</i>timed out
+        {%- elif a.outcome == 'tls' -%}
+          <b>TLS failed</b>
+        {%- else -%}
+          <b>unreachable</b>
+        {%- endif -%}
+        {% if a.tls_warning %}<span class="qc-note">{{ a.tls_warning }}</span>{% endif %}
+      </dd>
+    </div>
+    {% endif %}
+
+    {% if r.p2p and r.p2p.attempted %}
+    {% set p = r.p2p %}
+    <div class="qc-fact{% if not p.tcp_open %} is-off{% endif %}">
+      <dt>Peer port <span class="qc-port">{{ p.port }}</span></dt>
+      <dd>
+        {%- if p.tcp_open -%}
+          <b>open</b>{% if p.latency_ms is not none %}<i>·</i>{{ p.latency_ms | ms }} to connect{% endif %}
+          {%- if p.handshake_ok %}<i>·</i>handshake ok{% elif not p.handshake_attempted %}<span class="qc-note"{% if p.handshake_note %} title="{{ p.handshake_note }}"{% endif %}>Connect only. No handshake is sent, so the peer's version is not read.</span>{% endif -%}
+        {%- else -%}
+          <b>closed</b>{% if p.error %}<i>·</i>{{ p.error }}{% endif %}
+        {%- endif -%}
+      </dd>
+    </div>
+    {% endif %}
+
+    {% if r.api and r.api.height is not none %}
+    <div class="qc-fact">
+      <dt>Height</dt>
+      <dd>
+        {{- r.api.height | thousands -}}
+        {%- if r.sync == 'synced' -%}
+          <i>·</i><b class="qc-good">{% if r.lag == 0 %}at tip{% else %}in sync{% endif %}</b>
+        {%- elif r.sync == 'behind' -%}
+          <i>·</i><b class="qc-warn">{{ r.lag | thousands }} behind</b>
+        {%- elif r.sync == 'ahead' -%}
+          <i>·</i><b class="qc-warn">{{ (0 - r.lag) | thousands }} ahead</b>
+        {%- endif -%}
+        {% if r.network_tip is not none and r.sync != 'synced' %}<span class="qc-note">network tip {{ r.network_tip | thousands }}</span>{% endif %}
+      </dd>
+    </div>
+    {% endif %}
+
+    {% if r.network %}
+    <div class="qc-fact">
+      <dt>Network</dt>
+      <dd>
+        {%- if r.network == 'floonet' -%}
+          <b class="qc-warn">Floonet</b><i>·</i>the test network, not mainnet
+        {%- else -%}
+          Mainnet
+        {%- endif -%}
+        {%- if r.api and r.api.network_inferred %}<span class="qc-note">inferred from the height</span>{% endif -%}
+      </dd>
+    </div>
+    {% endif %}
+
+    {% if (r.api and r.api.node_version) or (r.p2p and r.p2p.user_agent) %}
+    <div class="qc-fact">
+      <dt>Version</dt>
+      <dd>
+        {%- if r.api and r.api.node_version -%}
+          <span class="{% if version_behind(r.api.node_version, released_node_version) %}ver-old{% endif %}"
+            {%- if version_behind(r.api.node_version, released_node_version) %} title="{{ released_node_version }} is released"{% endif %}>{{ r.api.node_version }}</span>
+          {%- if r.api.block_header_version is not none %}<i>·</i>header v{{ r.api.block_header_version }}{% endif -%}
+        {%- endif -%}
+        {%- if r.p2p and r.p2p.user_agent %}{% if r.api and r.api.node_version %}<i>·</i>{% endif %}{{ r.p2p.user_agent }}{% endif -%}
+        {%- if r.p2p and r.p2p.protocol_version is not none %}<i>·</i>protocol {{ r.p2p.protocol_version }}{% endif -%}
+      </dd>
+    </div>
+    {% endif %}
+
+    {% if r.api and r.api.ok %}
+    {#
+      Said rather than omitted, the same way the board says it: a peer count is on the owner
+      API, behind the node's api_secret, and a public probe that printed a number here would
+      be inventing it.
+    #}
+    <div class="qc-fact">
+      <dt>Peers</dt>
+      <dd class="qc-dim">not public — needs the owner API secret</dd>
+    </div>
+    {% endif %}
+  </dl>
+
+  {% if r.offer_default_retry %}
+  {#
+    The one-tap retry. Its own small form, so it works without JavaScript too; app.js
+    intercepts it like the main one.
+  #}
+  <form class="qc-retry" method="post" action="/check#quick-check">
+    <input type="hidden" name="address" value="{{ r.input }}" />
+    <input type="hidden" name="defaults" value="1" />
+    <button type="submit" class="qc-retry-btn">Try the default ports, 3413 and 3414</button>
+  </form>
+  {% endif %}
+  {% endif %}
+
+  <p class="qc-foot">
+    {%- if r.address and r.address != r.host %}<span>{{ r.host }} → <code>{{ r.address }}</code></span>{% endif -%}
+    <span>Checked from {{ prober_id }}{% if prober_region and prober_region != 'unknown' %} ({{ prober_region }}){% endif %} at <time datetime="{{ r.checked_at | rfc3339 }}">{{ r.checked_at | utc }}</time></span>
+    {%- if r.listed_slug %}<a href="#row-{{ r.listed_slug }}" data-qc-listed="{{ r.listed_slug }}">On this board</a>{% endif -%}
+  </p>
+</div>
+{% endmacro %}
