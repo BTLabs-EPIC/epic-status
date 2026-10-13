@@ -174,3 +174,29 @@ async def test_rate_limited_and_busy_are_429_never_503(
                                       headers={"x-forwarded-for": "9.9.9.8"})
     assert busy.status_code == 429 and 'data-error="busy"' in busy.text
     assert busy_json.status_code == 429 and busy_json.json()["error_kind"] == "busy"
+
+
+async def test_form_post_keeps_the_board_it_came_from(
+    tmp_path: Path, fake_dns: Any, fake_probes: list[Any]
+) -> None:
+    """A check from the floonet board answers on the floonet board, and its close link and
+    retry form stay there too. An unknown chain falls back to mainnet rather than failing."""
+    from datetime import UTC, datetime
+
+    from epic_status.models import Chain, NetworkSummary, Snapshot
+
+    fake_dns({"node.example.org": [PUBLIC]})
+    app = app_for(tmp_path)
+    app.state.service.poller.snapshots[Chain.FLOONET] = Snapshot(
+        generated_at=datetime.now(UTC), prober_id="test",
+        network=NetworkSummary(chain=Chain.FLOONET, tip_height=200),
+    )
+    async with client_for(app) as client:
+        floo = await client.post("/check", data={"address": "node.example.org", "chain": "floonet"},
+                                 headers={"sec-fetch-site": "same-origin"})
+        odd = await client.post("/check", data={"address": "node.example.org", "chain": "nope"},
+                                headers={"sec-fetch-site": "same-origin"})
+    assert 'data-chain="floonet"' in floo.text
+    assert 'href="/?chain=floonet" aria-label="Close' in floo.text
+    assert 'name="chain" value="floonet"' in floo.text
+    assert odd.status_code == 200 and 'data-chain="mainnet"' in odd.text

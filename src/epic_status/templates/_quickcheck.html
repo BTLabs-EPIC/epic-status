@@ -28,7 +28,7 @@
       The × is SVG because the multiplication sign is exactly the kind of character a
       minimal font set draws as a box.
     #}
-    <a class="qc-close" href="/" aria-label="Close the check and clear the address"
+    <a class="qc-close" href="/{{ chain_query }}" aria-label="Close the check and clear the address"
        title="Close (Esc)"{% if not qc %} hidden{% endif %}>
       <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none"
            stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
@@ -39,6 +39,9 @@
   <p class="qc-lede" id="qc-lede">Paste a node address. No port? We try the API on 3413, then the peer port on 3414.</p>
 
   <form class="qc-form" method="post" action="/check#quick-check" novalidate>
+    {# Which board to render the answer into on the no-JavaScript path. The check itself
+       is the same on every board: the network is detected from the node, not chosen. #}
+    <input type="hidden" name="chain" value="{{ chain.value }}" />
     <label class="sr-only" for="qc-input">Node address</label>
     <input id="qc-input" class="qc-input" name="address" type="text" inputmode="url"
            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
@@ -203,6 +206,7 @@
   <form class="qc-retry" method="post" action="/check#quick-check">
     <input type="hidden" name="address" value="{{ r.input }}" />
     <input type="hidden" name="defaults" value="1" />
+    <input type="hidden" name="chain" value="{{ chain.value }}" />
     <button type="submit" class="qc-retry-btn">Try the default ports, 3413 and 3414</button>
   </form>
   {% endif %}

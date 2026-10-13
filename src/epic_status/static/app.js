@@ -1351,6 +1351,8 @@
       var body = new URLSearchParams();
       body.set('address', address);
       if (defaults) body.set('defaults', '1');
+      var chainField = form.querySelector('input[name="chain"]');
+      if (chainField) body.set('chain', chainField.value);
       setBusy(true);
       fetch('/check', {
         method: 'POST',

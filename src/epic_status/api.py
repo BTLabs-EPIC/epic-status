@@ -305,6 +305,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request: Request,
             address: Annotated[str, Form(max_length=1024)] = "",
             defaults: Annotated[str, Form(max_length=8)] = "",
+            chain: Annotated[str, Form(max_length=16)] = "mainnet",
         ) -> Response:
             """The board's quick check, as a form post.
 
@@ -314,6 +315,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             the result in it, so the check works on a page with scripts blocked.
             """
             fragment = request.headers.get("x-quickcheck", "").lower() == "fragment"
+            board_chain = next((c for c in Chain if c.value == chain), Chain.MAINNET)
             if not _same_origin_post(request):
                 return Response(
                     "Cross-site checks are refused.",
@@ -332,15 +334,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 headers["retry-after"] = str(result.retry_after_s)
             if fragment:
                 return HTMLResponse(
-                    render_quickcheck_result(result=result, settings=settings),
+                    render_quickcheck_result(result=result, settings=settings, chain=board_chain),
                     status_code=status,
                     headers={**headers, **security_headers()},
                 )
-            snap = service.snapshot_for(Chain.MAINNET)
+            # The board the form was on. Anything unrecognised falls back to mainnet
+            # rather than 404ing: the visitor asked about a node, not about a chain.
+            snap = service.snapshot_for(board_chain)
             html = render_board(
                 snapshot=snap,
                 settings=settings,
-                chain=Chain.MAINNET,
+                chain=board_chain,
                 chains=service.chains(),
                 qc=result,
                 qc_input=result.input,

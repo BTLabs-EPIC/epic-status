@@ -693,13 +693,15 @@ def render_board(
     return _environment().get_template("board.html").render(**context)
 
 
-def render_quickcheck_result(*, result: QuickCheckResult, settings: Settings) -> str:
+def render_quickcheck_result(
+    *, result: QuickCheckResult, settings: Settings, chain: Chain = Chain.MAINNET
+) -> str:
     """Only the result of a quick check, for app.js to swap into the open box.
 
     Rendered by the same macro the full page uses, so the scripted path and the form path
     cannot drift into describing one result two ways.
     """
-    context = _base_context(None, settings, page="board")
+    context = _base_context(None, settings, chain=chain, page="board")
     template = _environment().get_template("_quickcheck.html")
     module = template.make_module(context)
     return str(module.result(result))  # type: ignore[attr-defined]

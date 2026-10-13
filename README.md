@@ -249,7 +249,7 @@ when someone is testing.
 a pool that drops out for three minutes every hour, or a test network that orphans a block
 every few hours. So a repeat of the same kind for the same host — or, for chain-level
 events, the same chain — within 24 hours of that entry's *first* occurrence is folded into
-it: the entry counts it ("7 outages in 24 h · 14m 05s down in total · latest 12:13 UTC"),
+it: the entry counts it ("7 outages in 24 h · 14m 05s down in total · first 07:08 UTC"),
 reads as ongoing again while the repeat lasts, and takes the worse severity and the deeper
 reorg. Anchoring on the first occurrence means two entries for one source always start a
 day apart, so no rolling 24 hours shows more than one. Every occurrence is still stored, in
@@ -425,9 +425,14 @@ it is fenced in `src/epic_status/quickcheck.py`:
 - **Bounded.** 3 s per step, 9 s per check, a 64 KiB response cap, no compression.
   Per visitor 5 checks a minute and 30 an hour (a salted hash of the address is kept,
   in memory only); per target 10 a minute across all visitors; 4 at once in total.
-- **Same-origin.** No CORS headers, a JSON content type required, and
-  `sec-fetch-site: cross-site` refused, so another site cannot make a visitor's
-  browser run checks.
+- **Same-origin.** `POST /api/v1/check` sends no CORS headers, requires a JSON
+  content type and refuses `sec-fetch-site: cross-site`. The board's own form posts to
+  `POST /check`, which has to accept an ordinary form so it works with JavaScript off;
+  it refuses any `sec-fetch-site` other than `same-origin`/`none`, and an `Origin` that
+  is not this host. Either way another site cannot make a visitor's browser run checks.
+- **Never 503.** A busy checker answers 429 with `Retry-After`, like a rate limit. The
+  nginx vhost replaces 502/503/504 with the "status page is down" notice, and a visitor
+  who pressed Check during a burst must not be told the monitor has failed.
 
 No P2P handshake by default. Epic keys peer records and bans by IP, not by IP and
 port, so a handshake from a host that also runs a node overwrites the remote's
