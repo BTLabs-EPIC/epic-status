@@ -120,6 +120,9 @@ present.
 | `ADMIN_COOKIE_SECURE` | `true` | `false` only for plain-HTTP development. |
 | `OWN_NODE_URL` | unset | A node you run, which the board may time from the reader's browser. |
 | `PROBER_KEYS` | empty | `id:secret,…` for remote probers. Empty means no push endpoint. See [Second vantage point](#second-vantage-point). |
+| `QUICKCHECK_ENABLED` | `true` | The board's quick node check and `POST /api/v1/check`. `false` removes both. See [Quick node check](#quick-node-check). |
+| `QUICKCHECK_P2P_HANDSHAKE` | `false` | Read the user agent from the peer port with a P2P handshake. Never on a host that also runs an Epic node. |
+| `QUICKCHECK_EXTRA_SELF_ADDRESSES` | empty | Public addresses of this machine not on any interface (1:1 NAT, elastic IP), comma-separated. |
 
 Nothing hardcodes a hostname. Moving an instance to a different domain is a DNS
 record and `SITE_URL`.
@@ -386,6 +389,38 @@ list shrinks by itself when a target is removed. A host whose API sends no
 `access-control-allow-origin` is reported as unreachable from the browser, which is what
 it is.
 
+### Quick node check
+
+A visitor can paste a node address and have it probed once, now. That is the one
+request path that makes this server connect somewhere it was not configured to, so
+it is fenced in `src/epic_status/quickcheck.py`:
+
+- **Fixed requests only.** `POST /v2/foreign` (`get_tip`, `get_version`,
+  `get_header 0` for the genesis hash, which names the network) on the API port, and
+  a TCP connect on the peer port. No path, method or body comes from the input; a
+  typed path other than `/` or `/v2/foreign` is refused.
+- **Fixed ports.** 3413 and 3414 by default, or one typed port above 1024. 22, 25,
+  80, 443 and the rest of the privileged range are never contacted.
+- **The submit form's address guard**, unchanged: resolve once, refuse if any address
+  is non-public, connect to the validated IP, no redirects. The connected socket's
+  peer is compared with that IP afterwards. IPv6 forms that a translator unwraps
+  (NAT64 `64:ff9b::/96`, 6to4 `2002::/16`, Teredo) are judged by the IPv4 inside.
+- **Not this server.** Its own addresses — read from `/proc/net`, plus
+  `QUICKCHECK_EXTRA_SELF_ADDRESSES` — are refused on every port except 3413/3414, so
+  `<our IP>:5432` cannot reach what the firewall hides. If they cannot be read,
+  typed ports are refused.
+- **Bounded.** 3 s per step, 9 s per check, a 64 KiB response cap, no compression.
+  Per visitor 5 checks a minute and 30 an hour (a salted hash of the address is kept,
+  in memory only); per target 10 a minute across all visitors; 4 at once in total.
+- **Same-origin.** No CORS headers, a JSON content type required, and
+  `sec-fetch-site: cross-site` refused, so another site cannot make a visitor's
+  browser run checks.
+
+No P2P handshake by default. Epic keys peer records and bans by IP, not by IP and
+port, so a handshake from a host that also runs a node overwrites the remote's
+record of that node and marks it defunct on hang-up, and a failed one bans the
+address for three hours.
+
 ## Self-hosting behind nginx
 
 Files in `ops/` are the source of truth and carry install commands in their headers.
@@ -511,6 +546,7 @@ src/epic_status/
   events.py      the incident log: open, settle, close
   poller.py      the sweep loop and the in-memory snapshot
   submit.py      submission validation
+  quickcheck.py  the board's one-off node check: parser, guards, probes, limits
   vantage.py     remote probers: signing, ingest, and the push loop
   api.py         public routes and JSON serialisation
   admin_routes.py  the /admin dashboard's routes

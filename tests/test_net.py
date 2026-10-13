@@ -148,6 +148,50 @@ def test_is_public(address: str, expected: bool) -> None:
     assert _is_public(ipaddress.ip_address(address)) is expected
 
 
+# IPv6 forms that a translator on the path unwraps to an IPv4 address. The embedded
+# address is what gets reached, so it is what has to be public.
+EMBEDDED_PRIVATE = [
+    pytest.param("64:ff9b::7f00:1", id="nat64-loopback"),
+    pytest.param("64:ff9b::a9fe:a9fe", id="nat64-metadata"),
+    pytest.param("64:ff9b::a00:1", id="nat64-rfc1918"),
+    pytest.param("64:ff9b:1::a00:1", id="nat64-local-use"),
+    pytest.param("2002:7f00:1::", id="6to4-loopback"),
+    pytest.param("2002:a9fe:a9fe::1", id="6to4-metadata"),
+    pytest.param("2002:c0a8:101::", id="6to4-rfc1918"),
+    pytest.param("2001:0:4136:e378:8000:63bf:80ff:fffe", id="teredo-loopback-client"),
+    pytest.param("::ffff:169.254.169.254", id="mapped-metadata"),
+]
+
+
+@pytest.mark.parametrize("address", EMBEDDED_PRIVATE)
+def test_is_public_refuses_embedded_private_ipv4(address: str) -> None:
+    assert _is_public(ipaddress.ip_address(address)) is False
+
+
+@pytest.mark.parametrize("address", EMBEDDED_PRIVATE)
+def test_embedded_rule_does_not_depend_on_stdlib(
+    address: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`is_global` for these prefixes has changed between Python releases. With it
+    forced to True the explicit rule must still refuse them."""
+    monkeypatch.setattr(ipaddress.IPv6Address, "is_global", property(lambda _self: True))
+    monkeypatch.setattr(ipaddress.IPv6Address, "is_private", property(lambda _self: False))
+    monkeypatch.setattr(ipaddress.IPv6Address, "is_reserved", property(lambda _self: False))
+    assert _is_public(ipaddress.ip_address(address)) is False
+
+
+def test_sixtofour_relay_anycast_refused() -> None:
+    assert _is_public(ipaddress.ip_address("192.88.99.1")) is False
+
+
+@pytest.mark.parametrize(
+    "endpoint", ["http://[64:ff9b::7f00:1]:3413/", "http://[2002:7f00:1::]:3413/"]
+)
+async def test_resolve_endpoint_refuses_translated_loopback(endpoint: str) -> None:
+    with pytest.raises(TargetRejected):
+        await resolve_endpoint(endpoint)
+
+
 # ----------------------------------------------------------------- default_port
 
 
