@@ -27,6 +27,7 @@ version and latency, and nothing else.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -64,6 +65,73 @@ async def _post(
         headers={"host": resolved.hostname},
         extensions={"sni_hostname": resolved.hostname},
     )
+
+
+class BodyTooLarge(Exception):
+    """The response grew past the cap and the read was abandoned."""
+
+
+class EncodedBody(Exception):
+    """The response is compressed even though identity was asked for. Refused rather
+    than decoded: a small gzip body can inflate a thousandfold."""
+
+
+@dataclass(frozen=True)
+class CappedResponse:
+    status_code: int
+    headers: httpx.Headers
+    body: bytes
+    peer: str | None
+    """The address the socket is actually connected to, when the transport reports
+    it. None under a mocked transport."""
+
+
+async def post_capped(
+    client: httpx.AsyncClient,
+    resolved: Resolved,
+    payload: dict[str, Any],
+    *,
+    max_bytes: int,
+) -> CappedResponse:
+    """`_post`, for a host nobody vetted: the body is streamed and abandoned past
+    `max_bytes`, and the connected peer address is reported back for re-checking.
+
+    The poller can afford `client.post`, which buffers whatever arrives, because its
+    targets are a committed list. A host a visitor typed could answer with a
+    gigabyte, so the read is bounded here rather than trusted.
+    """
+    # An IPv6 literal must be bracketed in a Host header, and must not be in SNI.
+    host_header = f"[{resolved.hostname}]" if ":" in resolved.hostname else resolved.hostname
+    async with client.stream(
+        "POST",
+        pinned_url(resolved, _RPC_PATH),
+        json=payload,
+        headers={"host": host_header, "accept-encoding": "identity"},
+        extensions={"sni_hostname": resolved.hostname},
+    ) as response:
+        peer: str | None = None
+        stream = response.extensions.get("network_stream")
+        if stream is not None:
+            server_addr = stream.get_extra_info("server_addr")
+            if isinstance(server_addr, tuple) and server_addr:
+                peer = str(server_addr[0])
+        encoding = response.headers.get("content-encoding", "identity").lower()
+        if encoding not in ("", "identity"):
+            raise EncodedBody(encoding)
+        declared = response.headers.get("content-length")
+        if declared is not None and declared.isdigit() and int(declared) > max_bytes:
+            raise BodyTooLarge(declared)
+        buf = bytearray()
+        async for chunk in response.aiter_raw():
+            buf.extend(chunk)
+            if len(buf) > max_bytes:
+                raise BodyTooLarge(str(len(buf)))
+        return CappedResponse(
+            status_code=response.status_code,
+            headers=response.headers,
+            body=bytes(buf),
+            peer=peer,
+        )
 
 
 def _unwrap(body: Any) -> tuple[dict[str, Any] | None, str | None]:

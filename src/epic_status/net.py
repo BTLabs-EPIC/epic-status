@@ -76,12 +76,45 @@ def _is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
             return False
         if ip in ipaddress.ip_network("192.0.0.0/24"):
             return False
+        # The deprecated 6to4 relay anycast block (RFC 7526). Nothing legitimate is
+        # addressed there any more, and what answers is whichever relay is nearest.
+        if ip in _SIXTOFOUR_RELAY:
+            return False
     else:
         if ip.ipv4_mapped is not None:
             return _is_public(ip.ipv4_mapped)
         if ip.is_site_local:
             return False
+        # Translation prefixes carry an IPv4 address inside an IPv6 one, and a
+        # gateway on the path unwraps it: 64:ff9b::7f00:1 is 127.0.0.1 to a NAT64
+        # box, 2002:7f00:1:: is 127.0.0.1 to a 6to4 relay. Checked explicitly
+        # rather than left to `is_global`, whose treatment of these prefixes has
+        # changed between Python releases — the embedded address is the one that
+        # gets reached, so it is the one that has to be public.
+        embedded = _embedded_ipv4(ip)
+        if embedded is not None and not _is_public(embedded):
+            return False
     return ip.is_global
+
+
+_SIXTOFOUR_RELAY = ipaddress.ip_network("192.88.99.0/24")
+_NAT64_PREFIXES = (
+    ipaddress.ip_network("64:ff9b::/96"),  # RFC 6052 well-known prefix
+    ipaddress.ip_network("64:ff9b:1::/48"),  # RFC 8215 local-use prefix
+)
+
+
+def _embedded_ipv4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """The IPv4 address a translator would deliver this IPv6 address to, if any."""
+    if ip.sixtofour is not None:
+        return ip.sixtofour
+    for prefix in _NAT64_PREFIXES:
+        if ip in prefix:
+            return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    if ip.teredo is not None:
+        # (server, client): the client is the host traffic ends up at.
+        return ip.teredo[1]
+    return None
 
 
 def default_port(scheme: str) -> int:

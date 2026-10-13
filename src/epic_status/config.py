@@ -142,6 +142,24 @@ class Settings(BaseSettings):
     """Only ever true for local development. Flipping it on a public instance
     turns the submit form into a port scanner aimed at your own network."""
 
+    quickcheck_enabled: bool = True
+    """The board's "check a node" field and `POST /api/v1/check`. False removes both:
+    the route is never registered. See `quickcheck` for the guards."""
+
+    quickcheck_p2p_handshake: bool = False
+    """Send an Epic P2P `Hand` to the peer port and read its `Shake`, for the user
+    agent and protocol version. **Off by default, and it must stay off on any host
+    whose public address also runs an Epic node**: Epic keys peer records and bans
+    by IP alone, so a handshake from here overwrites the remote's record of this
+    host's own node and marks it defunct on hang-up, and a failed one bans the
+    address for three hours. Off means a TCP connect only."""
+
+    quickcheck_extra_self_addresses: str = ""
+    """Comma-separated public addresses that reach this machine but are not on any of
+    its interfaces — a 1:1 NAT or a cloud elastic IP. The quick check refuses this
+    host's own addresses on any port but 3413/3414, and can only see the addresses
+    the kernel knows about without this."""
+
     keep_success_days: int = 7
     """Nobody needs to prove a node was up. Everybody eventually needs to prove
     it was down, so failures are never pruned."""

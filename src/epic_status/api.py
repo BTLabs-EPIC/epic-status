@@ -1,9 +1,11 @@
 """HTTP layer: the board, the JSON API, and the submit endpoint.
 
 Everything a visitor touches is served from the in-memory snapshot. No request path
-probes anything. That is the most important property of this file — see the poller's
-module docstring for why a status page that fans out per visitor becomes an attack
-on the hosts it monitors.
+probes anything, with one deliberate exception: `POST /api/v1/check`, the quick node
+check, which probes the one host the visitor typed, once, behind the guards and rate
+limits in `quickcheck`. That is the most important property of this file — see the
+poller's module docstring for why a status page that fans out per visitor becomes an
+attack on the hosts it monitors.
 
 The JSON schema matches grin.fail's field-for-field where they overlap, because that
 is already the de-facto shape in this ecosystem and anyone integrating has probably
@@ -31,7 +33,7 @@ from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import admin_routes, schemas
@@ -39,9 +41,10 @@ from .badges import badge_for
 from .config import Settings, load_seed_targets
 from .config import settings as get_settings
 from .db import Database
-from .models import Chain, Event, Kind, Severity, Snapshot, State, TargetStatus
+from .models import Chain, Event, Kind, Severity, Snapshot, State, Target, TargetStatus
 from .net import build_client
 from .poller import Poller
+from .quickcheck import QuickChecker, QuickCheckResult, run_check
 from .render import (
     probe_url,
     render_api,
@@ -140,6 +143,32 @@ class Service:
         # database, and stop being linkable across restarts — the right trade for a
         # value whose only job is rate limiting.
         self.submitter_salt = secrets.token_hex(16)
+        self.quickcheck = QuickChecker(settings)
+
+    async def quick_check(
+        self, raw: str, *, client_ip: str, use_defaults: bool = False
+    ) -> QuickCheckResult:
+        """Run a quick node check against the live snapshots.
+
+        The entry point for both the JSON route and the board's HTML form. Tips come
+        from the in-memory snapshots — no database read — and the listed targets
+        from every chain, so a typed hostname that is already on the board is named.
+        """
+        tips: dict[Chain, int | None] = {}
+        listed: list[Target] = []
+        for chain in Chain:
+            snap = self.snapshot_for(chain)
+            tips[chain] = snap.network.tip_height if snap is not None else None
+            if snap is not None:
+                listed.extend(s.target for s in snap.nodes)
+        return await run_check(
+            self.quickcheck,
+            raw,
+            client_ip=client_ip,
+            use_defaults=use_defaults,
+            tips=tips,
+            listed=listed,
+        )
 
     @property
     def snapshot(self) -> Snapshot | None:
@@ -192,6 +221,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 for task in (poll_task, validate_task):
                     task.cancel()
                 await asyncio.gather(poll_task, validate_task, return_exceptions=True)
+                await service.quickcheck.aclose()
         service.db.close()
 
     app = FastAPI(
@@ -618,6 +648,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return json_response({"ok": False, "error": exc.message}, exc.status)
             return json_response({"ok": True, "accepted": accepted, "skipped": skipped})
 
+    if settings.quickcheck_enabled:
+
+        @app.post("/api/v1/check", include_in_schema=False)
+        async def quick_check_api(request: Request) -> Response:
+            """One quick check of a typed node address, for the board's own page.
+
+            Same-origin only, by three separate means: no CORS headers, so a browser
+            on another site cannot read the answer; a JSON content type is required,
+            which a cross-site HTML form cannot send without a preflight this route
+            never answers; and `sec-fetch-site: cross-site` is refused outright.
+            Not in the public schema: it makes this server connect somewhere, which
+            is not something to advertise as an API.
+            """
+            return await _quick_check_route(service, request)
+
     @app.head("/api/v1/health", include_in_schema=False)
     @app.get(
         "/api/v1/health",
@@ -748,6 +793,51 @@ async def _run_validator(service: Service) -> None:
             except Exception:
                 log.exception("validator tick failed")
             await asyncio.sleep(_VALIDATOR_INTERVAL_S)
+
+
+_CHECK_BODY_LIMIT = 4096
+
+
+def _check_response(payload: dict[str, Any], status_code: int) -> Response:
+    # No cors() here, deliberately: see quick_check_api.
+    return JSONResponse(
+        payload,
+        status_code=status_code,
+        headers={"cache-control": "no-store", **security_headers()},
+    )
+
+
+async def _quick_check_route(service: Service, request: Request) -> Response:
+    if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
+        return _check_response({"error": "cross-site requests are refused"}, 403)
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type != "application/json":
+        return _check_response({"error": "send application/json"}, 415)
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > _CHECK_BODY_LIMIT:
+            return _check_response({"error": "request body too large"}, 413)
+    try:
+        data = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        data = None
+    address = data.get("address") if isinstance(data, dict) else None
+    defaults = data.get("defaults", False) if isinstance(data, dict) else False
+    if not isinstance(address, str) or not isinstance(defaults, bool):
+        return _check_response(
+            {"error": 'send {"address": "<host[:port]>", "defaults": false}'}, 400
+        )
+    result = await service.quick_check(
+        address, client_ip=client_address(request), use_defaults=defaults
+    )
+    # 429 for a visitor or target over its limit; 503 when every check slot is in use,
+    # which is this server's state rather than anything the caller did.
+    status = {"rate_limited": 429, "busy": 503}.get(result.error_kind or "", 200)
+    response = _check_response(result.model_dump(mode="json"), status)
+    if result.retry_after_s:
+        response.headers["retry-after"] = str(result.retry_after_s)
+    return response
 
 
 async def _do_submit(
