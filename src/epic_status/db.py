@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -62,6 +62,26 @@ SUBMISSION_STATUSES = ("pending", "verified", "accepted", "rejected")
 #: Pre-rendered for the schema f-string. `_sql_in` takes an Enum; these are plain strings
 #: because the status set is not modelled as one anywhere else.
 _sql_in_statuses = ",".join(f"'{status}'" for status in SUBMISSION_STATUSES)
+
+DEDUPE_WINDOW_S = 86400
+"""How long one incident-log row keeps absorbing repeats of itself.
+
+The same kind of event for the same source — a target's id, or the subject for a
+chain-level event — is folded into the most recent row for that key while that row's
+*first* occurrence is less than this old. Anchoring on the first occurrence rather than
+the latest is what makes the bound hold: two rows for one key always start at least a
+window apart, so any rolling 24 hours contains the start of at most one of them, and a
+pool that drops out every twenty minutes for a week is seven lines, not five hundred.
+"""
+
+#: Columns `events` gained after it first shipped, with their DDL. `events` is real state
+#: and is never rebuilt, so these are added in place with ALTER TABLE ADD COLUMN, which
+#: SQLite performs without rewriting rows. A test ties this list to SCHEMA.
+_EVENTS_ADDED_COLUMNS = (
+    ("occurrences", "INTEGER NOT NULL DEFAULT 1"),
+    ("last_started_at", "TEXT"),
+    ("active_s", "REAL"),
+)
 
 SCHEMA = f"""
 PRAGMA journal_mode = WAL;
@@ -199,12 +219,39 @@ CREATE TABLE IF NOT EXISTS events (
     -- Reorg depth, for counting and ranking without parsing `detail`. NULL otherwise.
     depth       INTEGER,
     prober_id   TEXT    NOT NULL,
+    -- One row is every occurrence of one kind for one source inside DEDUPE_WINDOW_S
+    -- of `started_at`; the occurrences themselves are in `event_occurrences`.
+    -- `started_at` is the first occurrence, `ended_at` the end of the latest one (NULL
+    -- while it lasts), `active_s` the summed length of the closed ones.
     started_at  TEXT    NOT NULL,
-    ended_at    TEXT
+    ended_at    TEXT,
+    occurrences INTEGER NOT NULL DEFAULT 1,
+    last_started_at TEXT,
+    active_s    REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_chain_time
     ON events (chain, started_at DESC);
+
+-- REAL STATE, like `events`: every individual occurrence an aggregate row stands for.
+-- This is what lets the log fold seven outages into one line without forgetting six
+-- of them. Never pruned. CASCADE is safe here and only here: an occurrence means
+-- nothing without its event, and events are never deleted except by the one-time
+-- compaction, which moves occurrences onto the surviving row first.
+CREATE TABLE IF NOT EXISTS event_occurrences (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id    INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    started_at  TEXT    NOT NULL,
+    ended_at    TEXT,
+    detail      TEXT,
+    -- Per occurrence, so the chain panel can still count and rank reorgs individually
+    -- and so compaction loses nothing that was on the original row.
+    severity    TEXT,
+    depth       INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_occurrences_event
+    ON event_occurrences (event_id, started_at DESC);
 
 -- Pending public submissions. Separate from `targets` on purpose: nothing here is
 -- ever probed on the main sweep, so a submitted host cannot become a poller
@@ -280,6 +327,97 @@ class Database:
         for table in ("targets", "submissions"):
             if self._needs_rebuild(table):
                 self._rebuild(table)
+        self._add_event_columns()
+        self._compact_events()
+
+    def _add_event_columns(self) -> None:
+        """Add the aggregate columns to a pre-dedupe `events` table, in place.
+
+        Reversible: `ALTER TABLE events DROP COLUMN` for each (SQLite 3.35+), plus
+        `DROP TABLE event_occurrences`. The compaction that follows is not — see there.
+        """
+        live = {r["name"] for r in self.conn.execute("PRAGMA table_info(events)")}
+        for name, ddl in _EVENTS_ADDED_COLUMNS:
+            if name not in live:
+                self.conn.execute(f"ALTER TABLE events ADD COLUMN {name} {ddl}")
+
+    def _compact_events(self) -> int:
+        """Fold incident-log rows written before deduplication into aggregates.
+
+        A row with no `event_occurrences` row predates the occurrence table — every
+        row written since gets one in the same transaction. Those rows are walked per
+        key in start order, and each is folded into the current aggregate when it
+        started inside DEDUPE_WINDOW_S of that aggregate's first start, the same rule
+        `open_event` applies live. Every original row becomes an occurrence, with its
+        own start, end, detail, severity and depth, so no timestamp is lost; the
+        surviving row is the earliest, so its feed id is stable.
+
+        Idempotent: once it has run, no row lacks an occurrence and this is one query.
+
+        **Not reversible by a migration.** The folded rows' ids are gone (their content
+        is in `event_occurrences`); unfolding would mean re-inserting a row per
+        occurrence. Back up the file first, as for anything touching real state.
+        Returns the number of rows folded away.
+        """
+        legacy = self.conn.execute(
+            """
+            SELECT * FROM events e
+             WHERE NOT EXISTS (SELECT 1 FROM event_occurrences o WHERE o.event_id = e.id)
+             ORDER BY e.started_at, e.id
+            """
+        ).fetchall()
+        if not legacy:
+            return 0
+        groups: dict[tuple[str, str, str], list[list[sqlite3.Row]]] = {}
+        for row in legacy:
+            runs = groups.setdefault(_event_key_of_row(row), [])
+            if runs and _within_window(runs[-1][0]["started_at"], row["started_at"]):
+                runs[-1].append(row)
+            else:
+                runs.append([row])
+        folded = 0
+        with self.tx() as conn:
+            for runs in groups.values():
+                for run in runs:
+                    head, last = run[0], run[-1]
+                    active = 0.0
+                    for row in run:
+                        conn.execute(
+                            "INSERT INTO event_occurrences (event_id, started_at, ended_at,"
+                            " detail, severity, depth) VALUES (?,?,?,?,?,?)",
+                            (
+                                head["id"],
+                                row["started_at"],
+                                row["ended_at"],
+                                row["detail"],
+                                row["severity"],
+                                row["depth"],
+                            ),
+                        )
+                        active += _seconds_between(row["started_at"], row["ended_at"])
+                    depths = [r["depth"] for r in run if r["depth"] is not None]
+                    conn.execute(
+                        """
+                        UPDATE events SET occurrences = ?, last_started_at = ?,
+                               ended_at = ?, active_s = ?, severity = ?, depth = ?,
+                               detail = ?
+                         WHERE id = ?
+                        """,
+                        (
+                            len(run),
+                            last["started_at"],
+                            last["ended_at"],
+                            active,
+                            _max_severity(r["severity"] for r in run),
+                            max(depths) if depths else None,
+                            last["detail"],
+                            head["id"],
+                        ),
+                    )
+                    for row in run[1:]:
+                        conn.execute("DELETE FROM events WHERE id = ?", (row["id"],))
+                        folded += 1
+        return folded
 
     def _needs_rebuild(self, table: str) -> bool:
         row = self.conn.execute(
@@ -1074,33 +1212,127 @@ class Database:
     # ------------------------------------------------------------------- events
 
     def open_event(self, event: Event, target_id: int | None = None) -> int:
-        cur = self.conn.execute(
-            """
-            INSERT INTO events
-                (chain, kind, severity, target_id, subject, detail, depth, prober_id,
-                 started_at, ended_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                event.chain.value,
-                event.kind.value,
-                event.severity.value,
-                target_id,
-                event.subject,
-                event.detail,
-                event.depth,
-                event.prober_id,
-                _iso(event.started_at),
-                _iso(event.ended_at) if event.ended_at else None,
-            ),
-        )
-        return int(cur.lastrowid or 0)
+        """Record one occurrence, folding it into a recent row for the same source.
+
+        The key is (chain, kind, source), where source is `target_id` when there is
+        one and `subject` otherwise. If the newest row for that key started inside
+        DEDUPE_WINDOW_S of this occurrence, the occurrence joins it: the count goes up,
+        the latest start and detail move, severity and depth take the maximum, and the
+        row reads as ongoing again — or, for an instant such as a reorg, ends now.
+        Otherwise a new row opens. Either way the occurrence itself is stored, and the
+        returned id is the row it belongs to.
+        """
+        start = _iso(event.started_at)
+        end = _iso(event.ended_at) if event.ended_at else None
+        with self.tx() as conn:
+            key: int | str
+            if target_id is not None:
+                where, key = "target_id = ?", target_id
+            else:
+                where, key = "target_id IS NULL AND subject = ?", event.subject
+            row = conn.execute(
+                f"""
+                SELECT * FROM events
+                 WHERE chain = ? AND kind = ? AND {where} AND started_at >= ?
+                 ORDER BY started_at DESC, id DESC LIMIT 1
+                """,
+                (
+                    event.chain.value,
+                    event.kind.value,
+                    key,
+                    _iso(event.started_at - timedelta(seconds=DEDUPE_WINDOW_S)),
+                ),
+            ).fetchone()
+            if row is None:
+                cur = conn.execute(
+                    """
+                    INSERT INTO events
+                        (chain, kind, severity, target_id, subject, detail, depth,
+                         prober_id, started_at, ended_at, occurrences, last_started_at,
+                         active_s)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?)
+                    """,
+                    (
+                        event.chain.value,
+                        event.kind.value,
+                        event.severity.value,
+                        target_id,
+                        event.subject,
+                        event.detail,
+                        event.depth,
+                        event.prober_id,
+                        start,
+                        end,
+                        start,
+                        _seconds_between(start, end),
+                    ),
+                )
+                event_id = int(cur.lastrowid or 0)
+            else:
+                event_id = int(row["id"])
+                active = float(row["active_s"] or 0.0)
+                if row["ended_at"] is None:
+                    # Still open by the database's account while a new occurrence
+                    # begins — the tracker lost track of it. End it where the new one
+                    # starts rather than leaving an occurrence open forever.
+                    active += self._close_occurrences(conn, event_id, start)
+                depths = [d for d in (row["depth"], event.depth) if d is not None]
+                conn.execute(
+                    """
+                    UPDATE events SET occurrences = occurrences + 1,
+                           last_started_at = ?, ended_at = ?, active_s = ?,
+                           severity = ?, depth = ?, detail = ?
+                     WHERE id = ?
+                    """,
+                    (
+                        start,
+                        end,
+                        active + _seconds_between(start, end),
+                        _max_severity((row["severity"], event.severity.value)),
+                        max(depths) if depths else None,
+                        event.detail,
+                        event_id,
+                    ),
+                )
+            conn.execute(
+                "INSERT INTO event_occurrences (event_id, started_at, ended_at, detail,"
+                " severity, depth) VALUES (?,?,?,?,?,?)",
+                (event_id, start, end, event.detail, event.severity.value, event.depth),
+            )
+        return event_id
 
     def close_event(self, event_id: int, ended_at: datetime | None = None) -> None:
-        self.conn.execute(
-            "UPDATE events SET ended_at = ? WHERE id = ? AND ended_at IS NULL",
-            (_iso(ended_at or _now()), event_id),
-        )
+        """End the open occurrence and, with it, the row: `ended_at` becomes the
+        occurrence's end and its length is added to `active_s`."""
+        end = _iso(ended_at or _now())
+        with self.tx() as conn:
+            row = conn.execute(
+                "SELECT ended_at FROM events WHERE id = ?", (event_id,)
+            ).fetchone()
+            if row is None or row["ended_at"] is not None:
+                return
+            active = self._close_occurrences(conn, event_id, end)
+            conn.execute(
+                "UPDATE events SET ended_at = ?, active_s = COALESCE(active_s, 0) + ?"
+                " WHERE id = ?",
+                (end, active, event_id),
+            )
+
+    @staticmethod
+    def _close_occurrences(conn: sqlite3.Connection, event_id: int, end: str) -> float:
+        """Close every open occurrence of one event at `end`; return their seconds."""
+        rows = conn.execute(
+            "SELECT id, started_at FROM event_occurrences"
+            " WHERE event_id = ? AND ended_at IS NULL",
+            (event_id,),
+        ).fetchall()
+        total = 0.0
+        for r in rows:
+            conn.execute(
+                "UPDATE event_occurrences SET ended_at = ? WHERE id = ?", (end, r["id"])
+            )
+            total += _seconds_between(r["started_at"], end)
+        return total
 
     def update_event_detail(self, event_id: int, detail: str | None) -> None:
         self.conn.execute(
@@ -1109,7 +1341,8 @@ class Database:
 
     def ongoing_events(self) -> list[tuple[Event, int | None]]:
         """Every open event, with its target id, for the tracker to resume after a
-        restart instead of opening a duplicate of each."""
+        restart instead of opening a duplicate of each. A row reopened by a new
+        occurrence is still one row, so it resumes once."""
         rows = self.conn.execute(
             f"{_EVENT_SELECT} WHERE e.ended_at IS NULL ORDER BY e.started_at"
         ).fetchall()
@@ -1123,24 +1356,65 @@ class Database:
         min_severity: Severity = Severity.INFO,
         since: datetime | None = None,
     ) -> list[Event]:
-        """Newest first. Ongoing events are included wherever they started."""
+        """Newest activity first — a row that recurred an hour ago sorts as an hour
+        old, not as old as its first occurrence. Ongoing events are included wherever
+        they started."""
         allowed = [s.value for s in Severity if s.rank >= min_severity.rank]
         marks = ",".join("?" for _ in allowed)
         sql = f"{_EVENT_SELECT} WHERE e.chain = ? AND e.severity IN ({marks})"
         params: list[Any] = [chain.value, *allowed]
         if since is not None:
-            sql += " AND (e.started_at >= ? OR e.ended_at IS NULL)"
+            sql += (
+                " AND (COALESCE(e.last_started_at, e.started_at) >= ?"
+                " OR e.ended_at IS NULL)"
+            )
             params.append(_iso(since))
-        sql += " ORDER BY e.started_at DESC, e.id DESC LIMIT ?"
+        sql += (
+            " ORDER BY COALESCE(e.last_started_at, e.started_at) DESC, e.id DESC LIMIT ?"
+        )
         params.append(limit)
         return [_row_to_event(r) for r in self.conn.execute(sql, params).fetchall()]
 
-    def reorgs_since(self, chain: Chain, since: datetime) -> list[Event]:
+    def occurrence_times(
+        self, event_ids: list[int], *, per_event: int = 50
+    ) -> dict[int, list[tuple[datetime, datetime | None]]]:
+        """The newest `per_event` occurrences of each event, newest first."""
+        if not event_ids:
+            return {}
+        marks = ",".join("?" for _ in event_ids)
         rows = self.conn.execute(
-            f"{_EVENT_SELECT} WHERE e.chain = ? AND e.kind = ? AND e.started_at >= ?",
+            f"""
+            SELECT event_id, started_at, ended_at FROM (
+                SELECT event_id, started_at, ended_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY event_id ORDER BY started_at DESC, id DESC
+                       ) AS n
+                  FROM event_occurrences WHERE event_id IN ({marks})
+            ) WHERE n <= ? ORDER BY event_id, started_at DESC
+            """,
+            (*event_ids, per_event),
+        ).fetchall()
+        out: dict[int, list[tuple[datetime, datetime | None]]] = {}
+        for r in rows:
+            started = parse_iso(r["started_at"])
+            if started is not None:
+                out.setdefault(int(r["event_id"]), []).append(
+                    (started, parse_iso(r["ended_at"]))
+                )
+        return out
+
+    def reorg_depths_since(self, chain: Chain, since: datetime) -> list[int]:
+        """The depth of every reorg since `since`, one per occurrence — a folded row
+        stands for several reorgs and the chain panel counts each."""
+        rows = self.conn.execute(
+            """
+            SELECT COALESCE(o.depth, e.depth, 1) AS depth
+              FROM event_occurrences o JOIN events e ON e.id = o.event_id
+             WHERE e.chain = ? AND e.kind = ? AND o.started_at >= ?
+            """,
             (chain.value, EventKind.REORG.value, _iso(since)),
         ).fetchall()
-        return [_row_to_event(r) for r in rows]
+        return [int(r["depth"]) for r in rows]
 
     # -------------------------------------------------------------- submissions
 
@@ -1467,4 +1741,34 @@ def _row_to_event(row: sqlite3.Row) -> Event:
         prober_id=row["prober_id"],
         started_at=started,
         ended_at=parse_iso(row["ended_at"]),
+        occurrences=int(row["occurrences"] or 1),
+        last_started_at=parse_iso(row["last_started_at"]) or started,
+        active_s=row["active_s"],
     )
+
+
+def _event_key_of_row(row: sqlite3.Row) -> tuple[str, str, str]:
+    """The dedupe key: (chain, kind, source), source being the target id when the row
+    has one and its subject otherwise. Mirrors the WHERE clause in `open_event`."""
+    source = f"t:{row['target_id']}" if row["target_id"] is not None else f"s:{row['subject']}"
+    return (row["chain"], row["kind"], source)
+
+
+def _within_window(first_start: str, start: str) -> bool:
+    first, this = parse_iso(first_start), parse_iso(start)
+    if first is None or this is None:
+        return False
+    return (this - first).total_seconds() <= DEDUPE_WINDOW_S
+
+
+def _seconds_between(start: str | None, end: str | None) -> float:
+    """Length of one occurrence; 0 while it is open or if either stamp is unreadable."""
+    a, b = parse_iso(start), parse_iso(end)
+    if a is None or b is None:
+        return 0.0
+    return max(0.0, (b - a).total_seconds())
+
+
+def _max_severity(values: Iterable[str]) -> str:
+    """The worst of several stored severities, by `Severity.rank`."""
+    return max((Severity(v) for v in values), key=lambda s: s.rank).value
