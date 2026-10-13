@@ -245,6 +245,19 @@ instants, logged with their depth: one and two blocks are `info` (orphan races e
 chain has), three or more are `warn`. A floonet stall is `info`; a test network is mined
 when someone is testing.
 
+**One line per source per day.** Settling merges a flap inside a minute; it does not help
+a pool that drops out for three minutes every hour, or a test network that orphans a block
+every few hours. So a repeat of the same kind for the same host — or, for chain-level
+events, the same chain — within 24 hours of that entry's *first* occurrence is folded into
+it: the entry counts it ("7 outages in 24 h · 14m 05s down in total · latest 12:13 UTC"),
+reads as ongoing again while the repeat lasts, and takes the worse severity and the deeper
+reorg. Anchoring on the first occurrence means two entries for one source always start a
+day apart, so no rolling 24 hours shows more than one. Every occurrence is still stored, in
+`event_occurrences`, with its own start, end and detail; the count is a summary, not a
+deletion. A database from before this change is compacted into the same shape once, at
+boot, keeping the earliest id of each folded group so feed entries stay stable — back the
+file up first, because that step is not undone by any migration.
+
 Shown on `/history`, published at `/api/v1/events.json` and `/feed.atom`. Never pruned,
 for the same reason failures are not.
 
@@ -291,7 +304,7 @@ open to cross-origin POSTs.
 | `GET /api/v1/pools.json?healthy=true` | Same, for mining pools. |
 | `GET /api/v1/health` | Liveness of **this service**, not of the network. 503 when the snapshot is stale. |
 | `POST /api/v1/submit` | `kind` (`node`, `epicbox` or `pool`), `host`, `operator`. |
-| `GET /api/v1/events.json?min=warn` | The incident log. One entry per incident; `ended_at` is null while it lasts. |
+| `GET /api/v1/events.json?min=warn` | The incident log. One entry per source per 24 h; `occurrences` counts repeats, `occurrence_times` lists up to 50, `ended_at` is null while the latest lasts. |
 | `GET /feed.atom?chain=floonet&min=info` | The same log as Atom. Defaults to `warn`, which leaves out one-block reorgs. |
 | `GET /badge/{id}.svg` | Embeddable badge: state and 30-day uptime. Drawn here, not by shields.io. |
 | `GET /api` | Reference. The OpenAPI document is `/api/openapi.json`. |

@@ -540,7 +540,7 @@ class Poller:
         if cached is not None and cached[0] > now:
             return cached[1]
         since = datetime.now(UTC) - timedelta(hours=24)
-        depths = [e.depth or 1 for e in self.db.reorgs_since(chain, since)]
+        depths = self.db.reorg_depths_since(chain, since)
         value = self._tracker(chain).activity(reorg_depths=depths)
         self._activity[chain] = (now + _UPTIME_TTL_S, value)
         return value

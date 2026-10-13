@@ -29,6 +29,18 @@
           <span class="event-subject">{{ e.subject }}</span>
         </p>
         {% if e.detail %}<p class="event-detail">{{ e.detail }}</p>{% endif %}
+        {#
+          One line per source per day: repeats inside 24 hours of the first are folded
+          into this entry, so the count is said here rather than shown as more rows.
+          The detail above, and the outcome, are the latest occurrence's.
+        #}
+        {% if e.occurrences > 1 %}
+        <p class="event-detail event-repeats">
+          <span class="event-count">{{ e.occurrences }} {{ e.kind | event_plural }} in 24 h</span>
+          {% if e.kind | event_active %}· <span class="event-active">{{ e.active_total_s | duration }} {{ e.kind | event_active }} in total</span>{% endif %}
+          · <span class="event-latest">latest <time datetime="{{ e.latest_start | rfc3339 }}">{{ e | event_latest }}</time></span>
+        </p>
+        {% endif %}
       </div>
       {#
         The outcome as a word, never only as a colour. A reorg is an instant, so it has
@@ -41,7 +53,7 @@
         <span class="dot" aria-hidden="true"></span><span class="event-state">Ongoing</span>
         {% else %}
         <span class="event-state">Resolved</span>
-        <span class="event-for">after {{ e.duration_s | duration }}</span>
+        <span class="event-for">after {{ e.last_duration_s | duration }}</span>
         {% endif %}
       </p>
     </li>

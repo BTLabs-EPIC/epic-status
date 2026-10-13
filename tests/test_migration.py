@@ -301,3 +301,200 @@ def test_parsed_columns_match_what_sqlite_creates(tmp_path: Path) -> None:
             assert _column_names(_create_table_sql(table)) == live, table
     finally:
         db.close()
+
+
+# ------------------------------------------------- the incident log, before dedupe
+
+# `events` as it shipped before occurrences were folded: one row per occurrence.
+OLD_EVENTS = """
+CREATE TABLE events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    chain       TEXT    NOT NULL,
+    kind        TEXT    NOT NULL,
+    severity    TEXT    NOT NULL,
+    target_id   INTEGER REFERENCES targets(id) ON DELETE SET NULL,
+    subject     TEXT    NOT NULL,
+    detail      TEXT,
+    depth       INTEGER,
+    prober_id   TEXT    NOT NULL,
+    started_at  TEXT    NOT NULL,
+    ended_at    TEXT
+);
+"""
+
+#: (id, chain, kind, severity, target_id, subject, depth, started_at, ended_at).
+#: Seven outages of one pool in a morning, the shape of the live log that prompted this;
+#: a reorg run on floonet with one deeper reorg in it; one outage a day later than the
+#: first, which must start a new entry; and an open outage, which must stay open.
+LEGACY_EVENTS = [
+    (253, "mainnet", "down", "warn", 7, "pool.example.org", None, "2026-10-13T07:08:26Z", "2026-10-13T07:11:46Z"),
+    (254, "mainnet", "down", "warn", 7, "pool.example.org", None, "2026-10-13T07:13:56Z", "2026-10-13T07:22:52Z"),
+    (255, "mainnet", "down", "warn", 7, "pool.example.org", None, "2026-10-13T07:25:57Z", "2026-10-13T07:27:12Z"),
+    (256, "mainnet", "down", "warn", 7, "pool.example.org", None, "2026-10-13T11:20:31Z", "2026-10-13T11:21:46Z"),
+    (257, "mainnet", "down", "warn", 7, "pool.example.org", None, "2026-10-13T11:48:31Z", "2026-10-13T11:50:16Z"),
+    (258, "mainnet", "down", "warn", 7, "pool.example.org", None, "2026-10-13T12:05:31Z", "2026-10-13T12:08:57Z"),
+    (259, "mainnet", "down", "warn", 7, "pool.example.org", None, "2026-10-13T12:13:32Z", "2026-10-13T12:15:27Z"),
+    (260, "mainnet", "down", "warn", 7, "pool.example.org", None, "2026-10-14T07:08:27Z", None),
+    (100, "floonet", "reorg", "info", None, "Floonet chain", 1, "2026-10-05T21:58:09Z", "2026-10-05T21:58:09Z"),
+    (101, "floonet", "reorg", "warn", None, "Floonet chain", 3, "2026-10-06T08:00:00Z", "2026-10-06T08:00:00Z"),
+    (102, "floonet", "reorg", "info", None, "Floonet chain", 1, "2026-10-06T21:58:09Z", "2026-10-06T21:58:09Z"),
+    (103, "floonet", "reorg", "info", None, "Floonet chain", 1, "2026-10-06T21:58:10Z", "2026-10-06T21:58:10Z"),
+    (104, "mainnet", "reorg", "info", None, "Mainnet chain", 1, "2026-10-06T08:00:00Z", "2026-10-06T08:00:00Z"),
+]
+
+
+@pytest.fixture
+def legacy_events_db(tmp_path: Path) -> Path:
+    path = tmp_path / "legacy-events.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(OLD_SCHEMA + OLD_EVENTS)
+    conn.execute(
+        "INSERT INTO targets (id, kind, slug, endpoint, display_host, source)"
+        " VALUES (7,'node','pool.example.org','https://pool.example.org','pool.example.org','seed')"
+    )
+    for row in LEGACY_EVENTS:
+        conn.execute(
+            "INSERT INTO events (id, chain, kind, severity, target_id, subject, depth,"
+            " prober_id, started_at, ended_at, detail) VALUES (?,?,?,?,?,?,?,'test',?,?,?)",
+            (*row, f"detail {row[0]}"),
+        )
+    conn.commit()
+    conn.close()
+    return path
+
+
+def _events(path: Path) -> list[tuple[object, ...]]:
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        return conn.execute(
+            "SELECT id, kind, severity, occurrences, started_at, last_started_at, ended_at,"
+            " active_s, depth, detail FROM events ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def _occurrences(path: Path) -> list[tuple[object, ...]]:
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        return conn.execute(
+            "SELECT event_id, started_at, ended_at, detail, severity, depth"
+            " FROM event_occurrences ORDER BY started_at, id"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def test_compaction_folds_a_day_of_repeats_into_the_earliest_row(
+    legacy_events_db: Path,
+) -> None:
+    Database(legacy_events_db, prober_id="test").close()
+    rows = {r[0]: r for r in _events(legacy_events_db)}
+
+    assert sorted(rows) == [100, 103, 104, 253, 260]
+    pool = rows[253]
+    assert pool[3] == 7
+    assert pool[4] == "2026-10-13T07:08:26Z"
+    assert pool[5] == "2026-10-13T12:13:32Z"
+    assert pool[6] == "2026-10-13T12:15:27Z"
+    # 200 + 536 + 75 + 75 + 105 + 206 + 115 seconds.
+    assert pool[7] == 1312
+    assert pool[9] == "detail 259"
+    # A day after the first outage is a new entry, and an open one stays open.
+    assert rows[260][3] == 1 and rows[260][6] is None
+
+
+def test_compaction_takes_the_worst_severity_and_the_deepest_reorg(
+    legacy_events_db: Path,
+) -> None:
+    Database(legacy_events_db, prober_id="test").close()
+    rows = {r[0]: r for r in _events(legacy_events_db)}
+
+    # 100 absorbs 101 (the warn, depth 3) and 102, which is exactly 24 h after 100 —
+    # the window is inclusive, as it is in `open_event`. 103, one second past it,
+    # starts the next entry, and the escalation does not leak into it.
+    assert rows[100][1:4] == ("reorg", "warn", 3)
+    assert rows[100][8] == 3
+    assert rows[103][1:4] == ("reorg", "info", 1)
+    # Chains never fold together.
+    assert rows[104][3] == 1
+
+
+def test_compaction_keeps_every_original_timestamp(legacy_events_db: Path) -> None:
+    Database(legacy_events_db, prober_id="test").close()
+    occurrences = _occurrences(legacy_events_db)
+
+    original = sorted((r[7], r[8], f"detail {r[0]}", r[3], r[6]) for r in LEGACY_EVENTS)
+    assert sorted(o[1:] for o in occurrences) == original
+    surviving = {r[0] for r in _events(legacy_events_db)}
+    assert {o[0] for o in occurrences} == surviving
+
+
+def test_compaction_is_idempotent(legacy_events_db: Path) -> None:
+    db = Database(legacy_events_db, prober_id="test")
+    try:
+        assert db._compact_events() == 0
+    finally:
+        db.close()
+    events, occurrences = _events(legacy_events_db), _occurrences(legacy_events_db)
+    Database(legacy_events_db, prober_id="test").close()
+    assert _events(legacy_events_db) == events
+    assert _occurrences(legacy_events_db) == occurrences
+
+
+def test_compaction_reports_what_it_folded(
+    legacy_events_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = Database._compact_events
+    monkeypatch.setattr(Database, "_compact_events", lambda self: 0)
+    db = Database(legacy_events_db, prober_id="test")
+    try:
+        assert len(_events(legacy_events_db)) == 13
+        assert real(db) == 13 - 5
+        assert real(db) == 0
+    finally:
+        db.close()
+
+
+def test_a_compacted_log_resumes_and_keeps_folding(legacy_events_db: Path) -> None:
+    from datetime import UTC, datetime
+
+    from epic_status.models import Chain, Event, EventKind, Severity
+
+    db = Database(legacy_events_db, prober_id="test")
+    try:
+        ongoing = db.ongoing_events()
+        assert [(e.id, t) for e, t in ongoing] == [(260, 7)]
+        db.close_event(260, datetime(2026, 10, 14, 7, 10, 27, tzinfo=UTC))
+        reopened = db.open_event(
+            Event(
+                chain=Chain.MAINNET,
+                kind=EventKind.DOWN,
+                severity=Severity.WARN,
+                subject="pool.example.org",
+                prober_id="test",
+                started_at=datetime(2026, 10, 14, 9, 0, tzinfo=UTC),
+            ),
+            7,
+        )
+        assert reopened == 260
+        event = next(e for e in db.events(Chain.MAINNET) if e.id == 260)
+        assert event.occurrences == 2 and event.ongoing and event.active_s == 120
+    finally:
+        db.close()
+
+
+def test_events_columns_match_the_schema(tmp_path: Path) -> None:
+    """The in-place column list and SCHEMA must agree, or a migrated file and a fresh
+    one would differ."""
+    from epic_status.db import _EVENTS_ADDED_COLUMNS
+
+    db = Database(tmp_path / "fresh.db", prober_id="test")
+    try:
+        live = {r[1] for r in db.conn.execute("PRAGMA table_info(events)")}
+        assert {name for name, _ in _EVENTS_ADDED_COLUMNS} <= live
+        assert _column_names(_create_table_sql("events")) == live
+        occ = {r[1] for r in db.conn.execute("PRAGMA table_info(event_occurrences)")}
+        assert {"event_id", "started_at", "ended_at", "detail"} <= occ
+    finally:
+        db.close()

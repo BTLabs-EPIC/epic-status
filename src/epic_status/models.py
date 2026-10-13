@@ -14,7 +14,7 @@ model silently fails on the second, which is the *better* deployment.
 from __future__ import annotations
 
 import enum
-from datetime import datetime
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -421,7 +421,18 @@ class Event(BaseModel):
     """Blocks replaced, for a reorg. None for every other kind."""
     prober_id: str
     started_at: datetime
+    """When the first occurrence began."""
     ended_at: datetime | None = None
+    """When the latest occurrence ended; None while it lasts."""
+    occurrences: int = 1
+    """How many times this happened to this subject inside the dedupe window. One row
+    stands for every occurrence of the same kind for the same source within 24 hours
+    of `started_at` — see `db.DEDUPE_WINDOW_S` — and each is kept in
+    `event_occurrences`, so the count is a summary and not a loss of history."""
+    last_started_at: datetime | None = None
+    """When the latest occurrence began. Equal to `started_at` when there is one."""
+    active_s: float | None = None
+    """Seconds the condition was active, summed over closed occurrences only."""
 
     @property
     def ongoing(self) -> bool:
@@ -429,9 +440,36 @@ class Event(BaseModel):
 
     @property
     def duration_s(self) -> int | None:
+        """First start to latest end. For a single occurrence, its duration; for an
+        aggregate, the span it covers, gaps included — `active_total_s` is the time the
+        condition actually held."""
         if self.ended_at is None:
             return None
         return max(0, int((self.ended_at - self.started_at).total_seconds()))
+
+    @property
+    def latest_start(self) -> datetime:
+        return self.last_started_at or self.started_at
+
+    @property
+    def last_duration_s(self) -> int | None:
+        """How long the latest occurrence lasted, or None while it lasts."""
+        if self.ended_at is None:
+            return None
+        return max(0, int((self.ended_at - self.latest_start).total_seconds()))
+
+    @property
+    def active_total_s(self) -> int:
+        """Closed occurrences plus the one still running, if any, up to now."""
+        total = self.active_s or 0.0
+        if self.ended_at is None:
+            total += max(0.0, (datetime.now(UTC) - self.latest_start).total_seconds())
+        return int(total)
+
+    @property
+    def updated_at(self) -> datetime:
+        """The latest change to this entry: a new occurrence or an end."""
+        return max(t for t in (self.started_at, self.last_started_at, self.ended_at) if t)
 
 
 # ----------------------------------------------------------------------- chain panel

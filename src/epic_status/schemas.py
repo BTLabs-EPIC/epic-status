@@ -423,6 +423,13 @@ class PoolList(BaseModel):
     )
 
 
+class OccurrenceOut(BaseModel):
+    """One occurrence folded into an incident entry."""
+
+    started_at: str = Field(examples=["2026-10-13T12:13:32Z"])
+    ended_at: str | None = Field(None, description="Null while it lasts.")
+
+
 class EventOut(BaseModel):
     """One incident. Conditions open and close; a reorg is an instant."""
 
@@ -444,8 +451,31 @@ class EventOut(BaseModel):
     ended_at: str | None = Field(
         None, description="Null while ongoing. Equal to `started_at` for a reorg."
     )
-    duration_s: int | None = None
+    duration_s: int | None = Field(
+        None, description="`ended_at` minus `started_at`: for a folded entry, the span."
+    )
     measured_from: str = Field(examples=["btlabs-lon"])
+    occurrences: int = Field(
+        1,
+        description=(
+            "How many times this happened to this subject within 24 hours of "
+            "`started_at`. Repeats are folded into one entry rather than listed."
+        ),
+        examples=[7],
+    )
+    last_started_at: str = Field(
+        description="Start of the latest occurrence; `started_at` when there is one.",
+        examples=["2026-10-13T12:13:32Z"],
+    )
+    active_s: float | None = Field(
+        None, description="Seconds active, summed over closed occurrences."
+    )
+    active_total_s: int = Field(
+        0, description="`active_s` plus the ongoing occurrence so far, if any."
+    )
+    occurrence_times: list[OccurrenceOut] = Field(
+        default_factory=list, description="Up to the 50 newest occurrences."
+    )
 
 
 class EventList(BaseModel):

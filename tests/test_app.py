@@ -14,8 +14,9 @@ deprecation warning — an error under this suite's `filterwarnings`.
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -232,3 +233,69 @@ async def test_badge_for_an_unknown_target_is_a_grey_404(client: httpx.AsyncClie
     response = await client.get("/badge/nope.example.org.svg")
     assert response.status_code == 404
     assert "not monitored" in response.text
+
+
+def _record_repeats(service: Service, times: int = 7) -> int:
+    """`times` outages of one host inside a day, the latest still going on."""
+    from epic_status.models import Event, EventKind, Severity
+
+    first = datetime.now(UTC) - timedelta(hours=6)
+    event_id = 0
+    for i in range(times):
+        start = first + timedelta(minutes=30 * i)
+        event_id = service.db.open_event(
+            Event(
+                chain=Chain.MAINNET,
+                kind=EventKind.DOWN,
+                severity=Severity.WARN,
+                subject="epicmine.io",
+                detail=f"outage {i}",
+                prober_id="test",
+                started_at=start,
+            )
+        )
+        if i < times - 1:
+            service.db.close_event(event_id, start + timedelta(minutes=2))
+    return event_id
+
+
+async def test_events_json_exposes_occurrences(
+    app: FastAPI, client: httpx.AsyncClient
+) -> None:
+    event_id = _record_repeats(app.state.service)
+    payload = (await client.get("/api/v1/events.json")).json()
+    assert len(payload["events"]) == 1
+    event = payload["events"][0]
+    assert event["id"] == event_id
+    assert event["occurrences"] == 7
+    assert event["ended_at"] is None
+    assert event["active_s"] == 6 * 120
+    assert event["active_total_s"] >= 6 * 120
+    assert event["detail"] == "outage 6"
+    assert event["last_started_at"] > event["started_at"]
+    times = event["occurrence_times"]
+    assert len(times) == 7
+    assert times[0]["started_at"] == event["last_started_at"]
+    assert times[0]["ended_at"] is None
+    assert times[-1]["started_at"] == event["started_at"]
+
+
+async def test_feed_says_how_many_times(app: FastAPI, client: httpx.AsyncClient) -> None:
+    _record_repeats(app.state.service)
+    body = (await client.get("/feed.atom")).text
+    assert body.count("<entry>") == 1
+    assert "Down — epicmine.io — 7 times in 24 h" in body
+    assert "7 outages in 24 h" in body
+    # <updated> is the latest change, which is the latest occurrence's start.
+    payload = (await client.get("/api/v1/events.json")).json()
+    assert f"<updated>{payload['events'][0]['last_started_at']}</updated>" in body
+
+
+async def test_history_shows_the_count(app: FastAPI, client: httpx.AsyncClient) -> None:
+    _record_repeats(app.state.service)
+    body = (await client.get("/history")).text
+    assert '<span class="event-count">7 outages in 24 h</span>' in body
+    # Six closed two-minute outages plus the one running for three hours.
+    assert re.search(r"3h 1[23]m down in total", body)
+    assert "Ongoing" in body
+    assert "style=" not in body.split('class="events"', 1)[1].split("</ol>", 1)[0]

@@ -10,13 +10,13 @@
 {% for e in events %}
   <entry>
     <id>tag:{{ tag_host }},2026:{{ chain.value }}/event/{{ e.id }}</id>
-    <title>{% if e.kind.value != 'reorg' and not e.ongoing %}Resolved: {% endif %}{{ e.kind | event_label }} — {{ e.subject }}</title>
+    <title>{% if e.kind.value != 'reorg' and not e.ongoing %}Resolved: {% endif %}{{ e.kind | event_label }} — {{ e.subject }}{% if e.occurrences > 1 %} — {{ e.occurrences }} times in 24 h{% endif %}</title>
     <link rel="alternate" type="text/html" href="{{ history_url }}#event-{{ e.id }}" />
     <published>{{ e.started_at | rfc3339 }}</published>
-    <updated>{{ (e.ended_at or e.started_at) | rfc3339 }}</updated>
+    <updated>{{ e.updated_at | rfc3339 }}</updated>
     <category term="{{ e.kind.value }}" />
     <category term="{{ e.severity.value }}" />
-    <summary type="text">{% if e.detail %}{{ e.detail }}. {% endif %}Started {{ e.started_at | when }}{% if e.kind.value == 'reorg' %}.{% elif e.ongoing %}, ongoing.{% else %}, ended {{ e.ended_at | when }} after {{ e.duration_s | duration }}.{% endif %}</summary>
+    <summary type="text">{% if e.occurrences > 1 %}{{ e.occurrences }} {{ e.kind | event_plural }} in 24 h, the first {{ e.started_at | when }}{% if e.kind | event_active %}, {{ e.active_total_s | duration }} {{ e.kind | event_active }} in total{% endif %}. Latest: {% endif %}{% if e.detail %}{{ e.detail }}. {% endif %}Started {{ e.latest_start | when }}{% if e.kind.value == 'reorg' %}.{% elif e.ongoing %}, ongoing.{% else %}, ended {{ e.ended_at | when }} after {{ e.last_duration_s | duration }}.{% endif %}</summary>
   </entry>
 {% endfor %}
 </feed>

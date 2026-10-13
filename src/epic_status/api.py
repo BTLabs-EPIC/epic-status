@@ -67,6 +67,10 @@ _HISTORY_EVENTS = 50
 
 _FEED_EVENTS = 50
 
+#: Occurrences listed per event in events.json, newest first. An aggregate can hold
+#: hundreds; the count is exact regardless, and fifty is more than a day of anything.
+_OCCURRENCE_TIMES = 50
+
 _VALIDATOR_INTERVAL_S = 15.0
 """How often pending submissions are checked. Slow on purpose: a pending submission
 is an unvetted host and must not share a deadline with the probes the board needs."""
@@ -664,6 +668,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "Outages, reorgs, forks, chain stalls and certificates close to expiry, "
             "newest first. A condition is one entry from start to end — `ended_at` is "
             "null while it is ongoing — and a reorg is an instant with its `depth`.\n\n"
+            "Repeats of the same kind for the same host or chain within 24 hours of an "
+            "entry's first occurrence are folded into it: `occurrences` counts them, "
+            "`last_started_at` is the latest, `active_s` sums the closed ones and "
+            "`occurrence_times` lists up to 50, newest first.\n\n"
             "`?min=warn` drops routine one-block reorgs and certificate notices; "
             "`?min=bad` leaves forks and stalls only. Also available as Atom at "
             "`/feed.atom`, which defaults to `warn`."
@@ -678,12 +686,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         selected = _chain_or_404(chain)
         severity = _severity_or_400(min_severity)
         events = service.db.events(selected, limit=limit, min_severity=severity)
+        times = service.db.occurrence_times(
+            [e.id for e in events if e.id is not None], per_event=_OCCURRENCE_TIMES
+        )
         return json_response(
             {
                 "generated_at": stamp(datetime.now(UTC)),
                 "chain": selected.value,
                 "min_severity": severity.value,
-                "events": [_serialise_event(e) for e in events],
+                "events": [_serialise_event(e, times.get(e.id or 0)) for e in events],
             }
         )
 
@@ -1002,7 +1013,12 @@ def _severity_or_400(raw: str) -> Severity:
         ) from None
 
 
-def _serialise_event(event: Event) -> dict[str, Any]:
+def _serialise_event(
+    event: Event, times: list[tuple[datetime, datetime | None]] | None = None
+) -> dict[str, Any]:
+    """Existing fields keep their meaning for a single occurrence; for an aggregate,
+    `started_at` is the first occurrence, `ended_at` the end of the latest and
+    `duration_s` the span between them. The new fields say what the row folds."""
     return {
         "id": event.id,
         "kind": event.kind.value,
@@ -1015,6 +1031,14 @@ def _serialise_event(event: Event) -> dict[str, Any]:
         "ended_at": stamp(event.ended_at),
         "duration_s": event.duration_s,
         "measured_from": event.prober_id,
+        "occurrences": event.occurrences,
+        "last_started_at": stamp(event.last_started_at or event.started_at),
+        "active_s": None if event.active_s is None else round(event.active_s, 1),
+        "active_total_s": event.active_total_s,
+        "occurrence_times": [
+            {"started_at": stamp(start), "ended_at": stamp(end)}
+            for start, end in (times or [])
+        ],
     }
 
 

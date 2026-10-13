@@ -19,6 +19,15 @@ a restart during an outage continues the incident instead of opening a duplicate
 
 Reorgs are the exception: they are instants rather than conditions, reported by
 `chain.ChainTracker`, and are written already closed.
+
+**Once a day per source, with a count.** Settling merges a flap inside a minute; it does
+not help a pool that is out for three minutes every hour, or a test network that orphans
+a block every few hours — each of those was a fresh row, and a week of them buried
+everything else in the log. `Database.open_event` therefore folds a new occurrence into
+the newest row for the same kind and source while that row's first occurrence is inside
+`db.DEDUPE_WINDOW_S`: the row counts it, reopens, and keeps every occurrence in
+`event_occurrences`. This module does not change for it — opening and closing still
+mean what they meant, and the id handed back may simply be one it has seen before.
 """
 
 from __future__ import annotations
@@ -188,9 +197,12 @@ class EventTracker:
         for key in [k for k in self._open if k[0] == chain.value and k not in seen]:
             self.db.close_event(self._open.pop(key).event_id, now)
 
-    def record_reorg(self, reorg: Reorg, *, source: str) -> Event:
-        """Write a reorg as an already-closed event."""
-        now = datetime.now(UTC)
+    def record_reorg(
+        self, reorg: Reorg, *, source: str, now: datetime | None = None
+    ) -> Event:
+        """Write a reorg as an already-closed event — or as one more occurrence of the
+        day's reorg row for this chain, whose id is then the one returned."""
+        now = now or datetime.now(UTC)
         depth = f"at least {reorg.depth}" if reorg.depth_is_lower_bound else str(reorg.depth)
         blocks = "block" if reorg.depth == 1 and not reorg.depth_is_lower_bound else "blocks"
         event = Event(
@@ -239,6 +251,8 @@ class EventTracker:
                 del self._pending[key]
                 if open_after_s:
                     event = event.model_copy(update={"started_at": since})
+                # May be a row seen before: a repeat inside the dedupe window
+                # reopens it rather than adding one.
                 self._open[key] = _Open(self.db.open_event(event, target_id))
                 log.info("event opened: %s %s", event.kind.value, event.subject)
             else:
