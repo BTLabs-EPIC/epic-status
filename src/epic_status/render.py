@@ -894,7 +894,8 @@ def render_api(*, settings: Settings) -> str:
             "tag": "incidents",
             "why": (
                 "The incident log: outages, reorgs, forks, stalls and certificates close "
-                "to expiry. One entry per incident; `ended_at` is null while it lasts."
+                "to expiry. One entry per source per 24 hours, with repeats counted in "
+                "`occurrences`; `ended_at` is null while the latest one lasts."
             ),
             "params": [
                 {"name": "min=warn", "what": "Drop routine one-block reorgs and notices."},
