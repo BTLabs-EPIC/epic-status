@@ -48,6 +48,7 @@ async def test_fragment_answer(tmp_path: Path, fake_dns: Any, fake_probes: list[
     html = response.text
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-quickcheck"] == "result"
     assert "access-control-allow-origin" not in response.headers
     # Only the result, not a page.
     assert "<html" not in html and html.lstrip().startswith('<div class="qc-out tone-ok"')

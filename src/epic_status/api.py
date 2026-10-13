@@ -333,10 +333,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if result.retry_after_s:
                 headers["retry-after"] = str(result.retry_after_s)
             if fragment:
+                # The marker is how app.js tells this answer from a page some proxy wrote:
+                # nginx answers its own rate limit with 429 and a stock HTML page, and that
+                # must not be swapped into the box as if it were a result.
                 return HTMLResponse(
                     render_quickcheck_result(result=result, settings=settings, chain=board_chain),
                     status_code=status,
-                    headers={**headers, **security_headers()},
+                    headers={**headers, "x-quickcheck": "result", **security_headers()},
                 )
             # The board the form was on. Anything unrecognised falls back to mainnet
             # rather than 404ing: the visitor asked about a node, not about a chain.

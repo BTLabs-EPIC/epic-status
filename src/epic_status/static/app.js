@@ -1365,13 +1365,18 @@
         body: body.toString()
       })
         .then(function (response) {
-          /* 429 carries a rendered result too: the rate-limit message is an answer. */
-          if (!response.ok && response.status !== 429) throw new Error('HTTP ' + response.status);
-          return response.text();
+          /* Only this service's own answer is shown, and it says so in a header. A 429 from
+             the app carries a rendered result — the limit message is an answer — but a 429
+             from the proxy in front of it is a stock HTML page, and a 502 is the "down"
+             notice; neither belongs inside the box. */
+          if (response.headers.get('x-quickcheck') === 'result') return response.text();
+          if (response.status === 429) return { local: 'Too many requests from your network. Try again in a minute.' };
+          throw new Error('HTTP ' + response.status);
         })
-        .then(function (html) {
+        .then(function (answer) {
           setBusy(false);
-          show(html);
+          if (typeof answer === 'string') show(answer);
+          else show(localMessage('info', answer.local));
         })
         .catch(function () {
           setBusy(false);
