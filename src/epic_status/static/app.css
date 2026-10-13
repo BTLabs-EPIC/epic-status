@@ -3920,9 +3920,11 @@ input[data-state='failed'] {
   transition: border-color var(--dur) var(--ease);
 }
 
+/* Full-strength dim ink, not a fraction of it: at 75% the example address fell to about
+   3.5:1 on the dark field, and it is the one line telling a visitor what format to paste. */
 .qc-input::placeholder {
   color: var(--ink-dim);
-  opacity: 0.75;
+  opacity: 1;
 }
 
 .qc-input:hover {
