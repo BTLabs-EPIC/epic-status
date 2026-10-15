@@ -2,7 +2,7 @@
 #
 # This file is the canonical list, kept in git so that adding or removing a
 # community server is a reviewable change. Public submissions land in SQLite
-# instead and are promoted automatically once they answer; see docs in README.
+# instead and are promoted automatically once they answer.
 #
 # Seed entries are exempt from auto-removal. `node.epiccash.com` being down is
 # the single most important thing this page can report, so it must never vanish
