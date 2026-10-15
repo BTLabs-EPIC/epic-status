@@ -103,14 +103,14 @@ MAX_TRACKED_KEYS = 10_000
 LOCAL_ADDRESS_TTL_S = 300.0
 
 # Genesis block hashes, as `get_header` at height 0 reports them. Source: the
-# assertions in /home/bt/epic/core/src/genesis.rs (`mainnet_genesis_hash`,
+# assertions in EpicCash/epic core/src/genesis.rs (`mainnet_genesis_hash`,
 # `floonet_genesis_hash`, Epic 4.0.4). Mainnet's was also read back from
 # node.epiccash.com's `get_header [0]` on 2026-10-13 and matches.
 MAINNET_GENESIS = "454018a56d86e37611bdcabc7de670305c3f3dc9675e314b437f1adc29430851"
 FLOONET_GENESIS = "95d457c669f65ee27b0c90b6b11c53d9b51eb0610b6ea8d5c2a45f96d8200c67"
 GENESIS = {MAINNET_GENESIS: Chain.MAINNET, FLOONET_GENESIS: Chain.FLOONET}
 
-# P2P wire constants, from /home/bt/epic/p2p/src/msg.rs and core/src/global.rs.
+# P2P wire constants, from EpicCash/epic p2p/src/msg.rs and core/src/global.rs.
 MAGIC = {Chain.MAINNET: bytes([97, 61]), Chain.FLOONET: bytes([83, 59])}
 MSG_HAND = 1
 MSG_SHAKE = 2

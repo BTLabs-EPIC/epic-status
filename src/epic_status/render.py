@@ -585,6 +585,7 @@ def _base_context(
     return {
         "site_name": settings.site_name,
         "site_url": settings.site_url,
+        "source_url": settings.source_url,
         "snapshot": snapshot,
         "network": snapshot.network if snapshot else None,
         # The chain being viewed, and the switch for changing it. `chains` is what this

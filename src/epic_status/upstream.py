@@ -397,7 +397,7 @@ def _client() -> httpx.AsyncClient:
         # repository, which is worth a log line rather than silently following.
         follow_redirects=False,
         trust_env=False,
-        headers={"user-agent": "epic-status/0.1 (+https://github.com/blacktyg3r/epic-status)"},
+        headers={"user-agent": "epic-status/0.1 (+https://github.com/blacktyger/epic-status)"},
     )
 
 

@@ -303,3 +303,25 @@ def test_an_unconfirmed_failure_is_amber_and_a_confirmed_one_red(snapshot: Snaps
     html = render_board(snapshot=snapshot, settings=SETTINGS)
     assert 'class="warn"' in html and "failed, confirming" in html
     assert 'class="bad"' in html
+
+
+# ------------------------------------------------------------------ source link
+
+
+def test_footer_links_to_the_public_repository(snapshot: Snapshot) -> None:
+    """The footer's Source link once pointed at a misspelt account that does not exist.
+    It now comes from `source_url`, and the Run-your-own link goes to the README section
+    that explains how."""
+    html = render_board(snapshot=snapshot, settings=SETTINGS)
+    assert SETTINGS.source_url == "https://github.com/blacktyger/epic-status"
+    assert f'<a href="{SETTINGS.source_url}">Source</a>' in html
+    assert f'<a href="{SETTINGS.source_url}#run-your-own-instance">Run your own</a>' in html
+    assert "blacktyg3r" not in html
+    api = render_api(settings=SETTINGS)
+    assert f'href="{SETTINGS.source_url}#run-your-own-instance"' in api
+
+
+def test_source_url_is_configurable(snapshot: Snapshot) -> None:
+    fork = Settings(source_url="https://example.org/fork/epic-status")
+    html = render_board(snapshot=snapshot, settings=fork)
+    assert '<a href="https://example.org/fork/epic-status">Source</a>' in html

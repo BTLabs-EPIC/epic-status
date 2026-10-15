@@ -10,6 +10,12 @@ Live instance: <https://status.btlabs.uk>
 
 Runs as a systemd unit, behind nginx, on one small VPS alongside a live mainnet node.
 
+![The status board: chain verdict, tip height, and the public nodes table](docs/screenshot.png)
+
+**Run your own.** The more vantage points the network has, the harder an outage is to
+miss. Everything needed is in this repository and nothing in it is specific to
+status.btlabs.uk — see [Run your own instance](#run-your-own-instance).
+
 ## What it measures, and what it cannot
 
 Per node, one unauthenticated JSON-RPC call every 5 seconds:
@@ -69,12 +75,17 @@ Three things it deliberately does not do:
   where. The "Check connection" button in an expanded row is the one exception: opt-in,
   per host, per press — see [Security](#security).
 
-## Quick start
+## Run your own instance
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+**Requirements:** Linux, Python 3.12+, [uv](https://docs.astral.sh/uv/), and outbound
+HTTPS/WSS to the hosts you monitor. About 70 MB of RAM. For a public instance, nginx and a
+TLS certificate. No database server, no Node.js, no build step. An Epic node of your own is
+optional — the board monitors public hosts over their public APIs.
+
+### 1. Try it locally
 
 ```sh
-git clone <this repo> epic-status && cd epic-status
+git clone https://github.com/blacktyger/epic-status.git && cd epic-status
 uv sync
 uv run epic-status serve
 ```
@@ -94,6 +105,56 @@ uv run epic-status check node.example.org --json
 Exit status is 0 if the target answered, 1 if not, so it works in a shell pipeline.
 It runs the same code the poller runs, including the address checks.
 
+### 2. Configure
+
+```sh
+cp .env.example .env        # gitignored; every line is optional
+```
+
+At minimum set `EPIC_STATUS_SITE_URL` and `EPIC_STATUS_PROBER_ID` (a name for where your
+instance runs, e.g. `yourname-nyc`). Everything is listed in
+[Configuration](#configuration). Secrets — `ADMIN_PASSWORD_HASH`, `PROBER_KEYS` — belong in
+`.env` or a root-owned `EnvironmentFile`, never in git.
+
+`config/targets.toml` is the list of what to monitor. The committed one covers the known
+public Epic nodes, relays and pools on mainnet and floonet; keep it, trim it, or add to it.
+
+### 3. Connect your own Epic node (optional)
+
+The probe only uses the node's **foreign** API (`POST /v2/foreign`, `get_tip`,
+`get_version`, `get_header`). It never needs, and never asks for, your owner API or
+`api_secret`. Add the node to `config/targets.toml`:
+
+```toml
+[[node]]
+slug = "node.example.org"
+display_host = "node.example.org"
+endpoint = "https://node.example.org"   # nginx on 443 in front of 127.0.0.1:3413
+operator = "Your name"
+ours = true
+```
+
+If the node runs on the same machine, still give its public URL: submissions and the quick
+check refuse loopback and private addresses by design, and the seed list is probed through
+the same guard (`ALLOW_PRIVATE_TARGETS` exists for development only). Set
+`EPIC_STATUS_OWN_NODE_URL` to the same URL if you want the board to time that one node from
+the reader's browser — it requires the node (or its proxy) to answer CORS preflights.
+Leave `QUICKCHECK_P2P_HANDSHAKE=false` on a host that runs a node; see
+[Quick node check](#quick-node-check) for why.
+
+### 4. Deploy
+
+systemd plus nginx, as the reference instance runs — the full sequence, including the
+certificate bootstrap, is in [Self-hosting behind nginx](#self-hosting-behind-nginx).
+Before installing `ops/systemd/epic-status.service`, edit `User`, `Group`,
+`WorkingDirectory`, the `EPIC_STATUS_*` paths and the `uv` path in `ExecStart` for your
+machine, and `SITE_URL`/`PROBER_ID`. In `ops/nginx/status.btlabs.uk.conf`, change
+`server_name` and the certificate paths.
+
+Point your monitoring at `/api/v1/health`, back up `data/status.db`, and consider
+running a [second vantage point](#second-vantage-point) for an existing hub instead of, or
+as well as, a hub of your own.
+
 ## Configuration
 
 Environment, prefix `EPIC_STATUS_`. A `.env` file in the working directory is read if
@@ -107,6 +168,7 @@ present.
 | `TARGETS_FILE` | `./config/targets.toml` | |
 | `SITE_NAME` | `Epic Cash Status` | |
 | `SITE_URL` | `http://127.0.0.1:13431` | Only used to print the `curl` example. |
+| `SOURCE_URL` | `https://github.com/blacktyger/epic-status` | The footer's Source and Run-your-own links. Point it at your fork if you change the code. |
 | `PROBER_ID` | `local` | Stamped on every stored check. |
 | `PROBER_REGION` | `unknown` | Shown in the footer. |
 | `RELEASED_NODE_VERSION` | from GitHub | Pin the released node version. Set, it is used as given and not fetched. |

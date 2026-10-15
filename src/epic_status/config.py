@@ -90,6 +90,9 @@ class Settings(BaseSettings):
 
     site_name: str = "Epic Cash Status"
     site_url: str = "http://127.0.0.1:13431"
+    source_url: str = "https://github.com/blacktyger/epic-status"
+    """Where the footer's Source and Run-your-own links point. A fork that changes
+    the code should point it at its own repository."""
     prober_id: str = "local"
     """Which vantage point these measurements come from. Stored on every check so
     a second prober in another region is additive rather than a migration. A

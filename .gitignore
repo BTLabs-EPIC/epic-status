@@ -16,3 +16,7 @@ data/
 
 # Local overrides.
 .env
+.env.*
+!.env.example
+# Database backups taken before migrations.
+*.bak*

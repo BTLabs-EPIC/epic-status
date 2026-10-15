@@ -252,7 +252,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"name": "service", "description": "Health of this monitor, not of the network."},
             {"name": "submit", "description": "Add a server to be monitored."},
         ],
-        contact={"name": "Source", "url": "https://github.com/blacktyg3r/epic-status"},
+        contact={"name": "Source", "url": settings.source_url},
         license_info={"name": "MIT", "identifier": "MIT"},
     )
     # HEAD is registered alongside GET on every read route. FastAPI does not add

@@ -2018,7 +2018,8 @@ pre {
 
 .foot-nav {
   display: flex;
-  gap: var(--sp-16);
+  flex-wrap: wrap;
+  gap: 0 var(--sp-16);
   margin-left: auto;
 }
 
