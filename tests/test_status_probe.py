@@ -237,3 +237,43 @@ async def test_rate_limited_does_not_try_the_fallback(clients: Any) -> None:
     assert probe.ok is False
     assert "rate limited" in (probe.error or "")
     assert owner.call_count == 0
+
+
+# ------------------------------------------------------- waiting-for-peers marker
+
+
+async def test_awaiting_peers_marks_only_after_two_calls_in_a_row(
+    db: Database, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single `awaiting_peers` answer is a blip and must not flicker the marker on;
+    two in a row is worth showing. Any other answer clears the streak."""
+    import epic_status.poller as poller_mod
+
+    poller = _poller(db, settings)
+    poller._client = object()  # type: ignore[assignment]
+    poller._insecure = object()  # type: ignore[assignment]
+
+    async def resolve(endpoint: str) -> Resolved:
+        return RESOLVED
+
+    answers: list[str] = []
+
+    async def fake_probe(*args: Any, **kwargs: Any) -> StatusProbe:
+        return StatusProbe(
+            ok=True, source=StatusSource.V1, connections=38, sync_status=answers.pop(0)
+        )
+
+    monkeypatch.setattr(poller, "_resolve", resolve)
+    monkeypatch.setattr(poller_mod, "probe_status", fake_probe)
+    node = _node(1)
+
+    def streak_after(sync: str) -> bool:
+        return poller._awaiting_streak.get(1, 0) >= poller_mod._AWAITING_PEERS_CALLS
+
+    seen = []
+    for sync in ("awaiting_peers", "awaiting_peers", "no_sync", "awaiting_peers"):
+        answers.append(sync)
+        await poller._one_status(node, 0.0)
+        seen.append(streak_after(sync))
+
+    assert seen == [False, True, False, False]

@@ -602,6 +602,10 @@ class TargetStatus(BaseModel):
     """Nodes only: `connections` from the status call. None when it did not answer."""
     status_probe: StatusProbe | None = None
     """Nodes only: the latest status call, or None before the first one returns."""
+    awaiting_peers: bool = False
+    """Nodes only: the status call has reported `awaiting_peers` on at least two
+    consecutive sweeps. Informational: it never changes `state`, uptime or failure
+    counts — a node in that state is still answering and usually still at tip."""
     tip_agrees: bool | None = None
     """Nodes only: whether this node's tip hash matches the most common hash among
     the other nodes of its chain at the same height. None when no other node is at

@@ -82,6 +82,9 @@ from .score import (
 
 log = logging.getLogger("epic_status.poller")
 
+#: Status calls in a row reporting `awaiting_peers` before the board marks the node.
+_AWAITING_PEERS_CALLS = 2
+
 _RESOLVE_TTL_S = 300.0
 """How long a validated address is reused. Long enough that the sweep is not a
 DNS flood, short enough that a legitimate DNS change is picked up within minutes.
@@ -145,6 +148,11 @@ class Poller:
         self._status: dict[int, StatusProbe] = {}
         self._status_inflight: set[int] = set()
         self._status_v1_retry: dict[int, float] = {}
+        # Consecutive status calls that reported `awaiting_peers`. A node passes
+        # through that state for a moment on every peer reshuffle; the board marks
+        # it only once it has been seen on two calls in a row, so a single blip
+        # never flickers a marker on and off.
+        self._awaiting_streak: dict[int, int] = {}
         self._p2p_alive: dict[int, bool] = {}
         self._cert_days: dict[int, int | None] = {}
         self._last_epicbox: dict[int, tuple[float, EpicboxProbe]] = {}
@@ -508,6 +516,10 @@ class Poller:
                 # The fallback stopped answering: start from `/v1/status` again.
                 self._status_v1_retry.pop(target.id, None)
             self._status[target.id] = result
+            if result.ok and result.sync_status == "awaiting_peers":
+                self._awaiting_streak[target.id] = self._awaiting_streak.get(target.id, 0) + 1
+            else:
+                self._awaiting_streak.pop(target.id, None)
         finally:
             self._status_inflight.discard(target.id)
 
@@ -840,6 +852,7 @@ class Poller:
                 else None
             ),
             status_probe=status_probe,
+            awaiting_peers=self._awaiting_streak.get(target.id, 0) >= _AWAITING_PEERS_CALLS,
             tip_agrees=tip_agrees,
             last_checked_at=datetime.now(UTC),
             last_ok_at=datetime.now(UTC) if probe.ok else parse_iso(row["last_ok_at"]),

@@ -447,6 +447,71 @@
     );
   }
 
+  /* Mirrors render.peers_note, wording included; change both. */
+  function peersNote(row) {
+    var ns = row.node_status;
+    if (!ns || !ns.awaiting_peers) return null;
+    var note = 'Node reports waiting for peers. Usually clears within seconds';
+    var lag = row.tip_lag;
+    if (row.error_count === 0 && lag !== null && lag !== undefined && lag <= 0) {
+      return note + '; it is still reachable and at tip.';
+    }
+    if (row.error_count === 0) return note + '; it is still reachable.';
+    return note + '.';
+  }
+
+  /* The marker is always in the server-rendered markup for a node, so crossing the
+     threshold on a poll is one attribute and one sentence, never new DOM. */
+  function setPeersHint(slug, row) {
+    var hint = document.querySelector(
+      '[data-field="peers-hint"][data-slug="' + cssEscape(slug) + '"]'
+    );
+    if (!hint) return;
+    var why = peersNote(row);
+    var tip = hint.querySelector('.peers-tip');
+    if (tip) tip.textContent = why || '';
+    if (why) {
+      hint.hidden = false;
+    } else {
+      hint.hidden = true;
+      hint.classList.remove('is-open');
+    }
+  }
+
+  /* A tap opens the sentence and a second tap, Escape or a tap elsewhere closes it. Hover
+     and keyboard focus are handled in CSS. The row's own click handler ignores buttons, so
+     tapping the marker never folds the row. */
+  document.addEventListener('click', function (event) {
+    var btn = event.target.closest('.peers-hint-btn');
+    var open = document.querySelectorAll('.peers-hint.is-open');
+    for (var i = 0; i < open.length; i++) {
+      if (!btn || open[i] !== btn.parentNode) open[i].classList.remove('is-open');
+    }
+    if (btn) {
+      btn.parentNode.classList.remove('is-quiet');
+      btn.parentNode.classList.toggle('is-open');
+    }
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape') return;
+    var open = document.querySelectorAll('.peers-hint.is-open');
+    var focused = document.activeElement && document.activeElement.closest
+      ? document.activeElement.closest('.peers-hint')
+      : null;
+    if (!open.length && !(focused && !focused.classList.contains('is-quiet'))) return;
+    for (var i = 0; i < open.length; i++) open[i].classList.remove('is-open');
+    /* A tooltip opened by focus has to be dismissable without moving focus (WCAG 1.4.13).
+       Escape here closes the tooltip only; the open row stays open until a second Escape. */
+    if (focused) focused.classList.add('is-quiet');
+    event.stopImmediatePropagation();
+  });
+
+  document.addEventListener('focusout', function (event) {
+    var hint = event.target.closest && event.target.closest('.peers-hint');
+    if (hint) hint.classList.remove('is-quiet');
+  });
+
   function patchRow(row, network) {
     var slug = row.id;
     if (row.kind === 'node') {
@@ -460,6 +525,7 @@
         network ? network.released_node_version : null
       );
       setField(slug, 'peers', fmtNum(row.peers), row.peers);
+      setPeersHint(slug, row);
     } else if (row.kind === 'pool') {
       setField(slug, 'miners', fmtNum(row.miners), row.miners);
       /* No height and no tip comparison: a pool's block height is the last block it

@@ -1276,6 +1276,7 @@ def _serialise_target(status: TargetStatus) -> dict[str, Any]:
                 "height": sp.height,
                 "tip_hash": sp.tip_hash,
                 "tip_agrees": status.tip_agrees,
+                "awaiting_peers": status.awaiting_peers,
                 "error": sp.error,
             }
         )

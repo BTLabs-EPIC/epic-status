@@ -506,6 +506,24 @@ def _lag_note(status: TargetStatus) -> str:
     return f"−{status.tip_lag:,}"
 
 
+def peers_note(awaiting: bool, tip_lag: int | None, failures: int) -> str | None:
+    """The tooltip for a node that keeps reporting `awaiting_peers`, or None.
+
+    Like `cert_note`, the sentence carries the reassurance with the fact: the state
+    is transient and the node is usually answering and at tip while it lasts, which
+    is exactly what the rest of the row shows. Only the parts that are true right now
+    are claimed. Mirrored in app.js `peersNote`; change both.
+    """
+    if not awaiting:
+        return None
+    note = "Node reports waiting for peers. Usually clears within seconds"
+    if failures == 0 and tip_lag is not None and tip_lag <= 0:
+        return note + "; it is still reachable and at tip."
+    if failures == 0:
+        return note + "; it is still reachable."
+    return note + "."
+
+
 def cert_note(days: int | None, warn_days: int) -> str | None:
     """The tooltip for a relay whose certificate is near expiry, or None when it is not.
 
@@ -690,6 +708,8 @@ def _base_context(
         # scanning the TLS column, not to compete with the state word at the end of the
         # row — a relay with three weeks of certificate left is not an incident.
         "icon_warn": icons.triangle_alert(12),
+        "icon_peers": icons.users(13),
+        "peers_note": peers_note,
         "epicbox_url": releases.EPICBOX_URL,
         # Strictly-older, not merely-different. A relay ahead of the published
         # protocol number is a normal state and must not be marked as behind.

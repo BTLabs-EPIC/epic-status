@@ -18,6 +18,22 @@
   calm, so that the one saturated thing on screen is always a fault.
 #}
 
+{#
+  A node that keeps reporting `awaiting_peers`. Informational, never a fault: the state,
+  uptime and failure count are untouched, so this is the one place the fact surfaces in
+  the row. A real button so it is a tab stop and a tap target (the row's click handler
+  leaves buttons alone), with its sentence in a tooltip that opens on hover, focus and
+  tap — `title` alone never reaches a keyboard or a phone. Always in the markup for a
+  node and toggled with `hidden`, so a poll that crosses the threshold builds no DOM.
+#}
+{% macro peers_hint(status) %}
+{% set why = peers_note(status.awaiting_peers, status.tip_lag, status.consecutive_failures) %}
+<span class="peers-hint" data-field="peers-hint" data-slug="{{ status.target.slug }}"{% if not why %} hidden{% endif %}>
+  <button type="button" class="peers-hint-btn" aria-label="Waiting for peers" aria-describedby="ph-{{ status.target.slug }}">{{ icon_peers }}</button>
+  <span class="peers-tip" role="tooltip" id="ph-{{ status.target.slug }}">{{ why or '' }}</span>
+</span>
+{%- endmacro %}
+
 {% macro row(status, kind, tip) %}
 {% set t = status.target %}
 <li class="row state-{{ status.state.value }}" id="row-{{ t.slug }}" data-slug="{{ t.slug }}">
@@ -35,7 +51,7 @@
     already spent its saturated colours on faults.
   #}
   <span class="row-host">
-    <b>{{ t.display_host }}{% if t.verified %}<span class="verified-mark" role="img" title="Verified by the Epic Cash dev team" aria-label="Verified by the Epic Cash dev team">{{ icon_check }}</span>{% endif %}</b>
+    <b>{{ t.display_host }}{% if t.verified %}<span class="verified-mark" role="img" title="Verified by the Epic Cash dev team" aria-label="Verified by the Epic Cash dev team">{{ icon_check }}</span>{% endif %}{% if kind == Kind.NODE %}{{ peers_hint(status) }}{% endif %}</b>
     <span>{{ t.operator or t.label or 'operator not stated' }}</span>
   </span>
 
@@ -489,7 +505,14 @@
     <dl class="d-list">
       {# A table column on the desktop; here for the phone, where the row drops it. #}
       <div class="d-narrow"><dt>height</dt><dd>{{ status.height | thousands }}</dd></div>
+      {# Waiting for peers is a passing state on a node that is otherwise answering, so it
+         reads in the warning ink with that said beside it, not as plain text that looks
+         like a stuck node and not in the fault colour. #}
+      {% if live and sp.sync_status == 'awaiting_peers' %}
+      <div class="d-note"><dt>sync</dt><dd><b>waiting for peers</b> · usually clears within seconds</dd></div>
+      {% else %}
       <div><dt>sync</dt><dd>{{ sp.sync_status | sync_label if live else '—' }}</dd></div>
+      {% endif %}
       <div{% if status.tip_agrees == false %} class="d-warn"{% endif %}>
         <dt>tip hash</dt>
         <dd>{% if shown_hash %}<code title="{{ shown_hash }}">{{ shown_hash | short_hash }}</code>

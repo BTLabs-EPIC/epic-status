@@ -1037,6 +1037,101 @@ main {
   border-radius: 2px;
 }
 
+/* ------------------------------------------------- waiting-for-peers marker */
+
+/* A node that has reported `awaiting_peers` on two status calls in a row. Informational:
+ * the dot, state word and uptime stay as they are, so this is one small amber glyph beside
+ * the host name and nothing else. No animation, no tint on the row — it is a passing state
+ * on a node that is otherwise answering, and the page's saturated colours belong to faults.
+ *
+ * The tooltip is ours rather than `title`, because `title` never opens on a keyboard focus
+ * or a tap. It opens on hover, on focus, and on `.is-open`, which the script toggles on a
+ * tap and clears on Escape or a tap elsewhere. */
+/* The tooltip is anchored to the host cell, not to the glyph: the glyph sits after a host
+   name of any length, and a tooltip hung from it ran off the right edge of a 360px phone. */
+.row-host {
+  position: relative;
+}
+
+.peers-hint {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--sp-6);
+  vertical-align: -1px;
+}
+
+.peers-hint[hidden] {
+  display: none;
+}
+
+.peers-hint-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* A 24px target round a 13px glyph, pulled back by the negative margin so the host
+     line does not grow taller for it. */
+  min-width: 24px;
+  min-height: 24px;
+  margin: -6px -5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--warn-dot);
+  cursor: help;
+}
+
+.peers-hint-btn:focus-visible {
+  outline: 2px solid var(--warn-dot);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.peers-tip {
+  position: absolute;
+  top: calc(100% + var(--sp-4));
+  left: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: min(18rem, calc(100vw - 4.5rem));
+  padding: var(--sp-6) var(--sp-8);
+  border: 1px solid var(--warn-line);
+  border-radius: 4px;
+  background: var(--s3);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--t-micro);
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: normal;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Hover only where hover is real: on a touchscreen `:hover` sticks after a tap, and the
+   second tap that should close the tooltip would leave it showing. */
+@media (hover: hover) {
+  .peers-hint:hover .peers-tip {
+    visibility: visible;
+  }
+}
+
+.peers-hint-btn:focus-visible + .peers-tip,
+.peers-hint.is-open .peers-tip {
+  visibility: visible;
+}
+
+.peers-hint.is-quiet .peers-tip {
+  visibility: hidden;
+}
+
+/* The sync line in the detail panel, in the same case: warning ink with the reassurance
+   beside it, so it reads as a passing state rather than a stuck node or an error. */
+.d-note dd b {
+  color: var(--warn-ink);
+  font-weight: 500;
+}
+
 .row-detail {
   grid-area: meta;
 }

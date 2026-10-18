@@ -147,6 +147,11 @@ class NodeStatusCall(BaseModel):
         description="Whether tip_hash matches the most common hash of the other nodes "
         "at the same height. Null when no other node is at that height.",
     )
+    awaiting_peers: bool = Field(
+        False,
+        description="sync_status has been `awaiting_peers` on two or more consecutive "
+        "status calls. Informational only; it does not affect `state`.",
+    )
     error: str | None = Field(
         None, description="Why neither endpoint answered, per endpoint."
     )

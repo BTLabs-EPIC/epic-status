@@ -361,3 +361,30 @@ def test_node_status_renders_peers_and_details(snapshot: Snapshot) -> None:
     assert "<em>peers</em>—" in row_down
     assert 'title="Status unavailable"' in row_down
     assert "unavailable · /v1/status: HTTP 401; owner get_status: HTTP 403" in html
+
+
+def test_awaiting_peers_marker_and_sync_line(snapshot: Snapshot) -> None:
+    """The marker beside the host, with its sentence, when the node keeps reporting
+    `awaiting_peers`; hidden otherwise. The state word is untouched."""
+    from epic_status.models import StatusProbe, StatusSource
+
+    ok, down = snapshot.nodes
+    ok.tip_lag = 0
+    ok.consecutive_failures = 0
+    ok.awaiting_peers = True
+    ok.status_probe = StatusProbe(
+        ok=True, source=StatusSource.V1, connections=38, sync_status="awaiting_peers"
+    )
+    html = render_board(snapshot=snapshot, settings=SETTINGS)
+
+    row_ok = html.split('id="row-a.example"', 1)[1].split('id="row-b.example"', 1)[0]
+    hint = row_ok.split('data-field="peers-hint"', 1)[1].split("</span>\n</span>", 1)[0]
+    assert " hidden>" not in hint
+    assert 'aria-describedby="ph-a.example"' in hint
+    assert "Usually clears within seconds; it is still reachable and at tip." in hint
+    assert '<b>waiting for peers</b> · usually clears within seconds' in row_ok
+    assert "Online" in row_ok
+
+    row_down = html.split('id="row-b.example"', 1)[1].split("</li>", 1)[0]
+    assert 'data-field="peers-hint"' in row_down
+    assert row_down.split('data-field="peers-hint"', 1)[1].split(">", 1)[0].endswith(" hidden")
