@@ -18,10 +18,10 @@ live mainnet rather than inferred from Grin:
 * `result` is wrapped in an `Ok`/`Err` envelope inside the JSON-RPC `result`, so
   the height lives at `result.Ok.height`.
 
-What is *not* available without credentials, and must not be promised per row:
-peer counts and sync status. Those are the owner API on the same port, which
-requires an `api_secret`. A remote observer gets tip, difficulty, block hash,
-version and latency, and nothing else.
+Peer counts and sync status are not on the foreign API. Epic 4.1.0-1 serves them
+at `GET /v1/status` without auth, and a stock 4.x serves the same struct through
+the owner API's `get_status`; see `probe_status`. A node that answers neither
+still gets tip, difficulty, block hash, version and latency.
 """
 
 from __future__ import annotations
@@ -39,6 +39,8 @@ from ..models import (
     HeaderProbe,
     NodeProbe,
     Reason,
+    StatusProbe,
+    StatusSource,
     VersionProbe,
 )
 from ..net import Resolved, classify_http_error, pinned_url
@@ -396,3 +398,119 @@ async def probe_header(
 
 def _as_str(value: Any) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _as_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+class _NoAnswer(Exception):
+    """The host gave no HTTP answer at all. Not worth a second endpoint."""
+
+
+async def _status_request(
+    client: httpx.AsyncClient,
+    insecure_client: httpx.AsyncClient,
+    resolved: Resolved,
+    source: StatusSource,
+    timeout: float,
+) -> httpx.Response:
+    """One status request, with the same one-shot TLS retry as `probe_tip`: a
+    self-signed node is serving, and its peers are as real as anyone's."""
+    if source is StatusSource.V1:
+        method, path, body = "GET", "/v1/status", None
+    else:
+        method, path, body = "POST", "/v2/owner", _rpc("get_status", [])
+    for attempt in (client, insecure_client):
+        try:
+            return await attempt.request(
+                method,
+                pinned_url(resolved, path),
+                json=body,
+                headers={"host": resolved.hostname},
+                extensions={"sni_hostname": resolved.hostname},
+                timeout=timeout,
+            )
+        except Exception as exc:  # noqa: BLE001 - every failure mode becomes text
+            reason, message = classify_http_error(exc)
+            if reason is not Reason.TLS or attempt is insecure_client:
+                raise _NoAnswer(message) from exc
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _parse_status(payload: Any, source: StatusSource) -> StatusProbe:
+    if not isinstance(payload, dict):
+        return StatusProbe(ok=False, error="status was not a JSON object")
+    connections = _as_int(payload.get("connections"))
+    if connections is None:
+        return StatusProbe(ok=False, error="no connections in status")
+    tip = payload.get("tip")
+    tip = tip if isinstance(tip, dict) else {}
+    raw_difficulty = tip.get("total_difficulty")
+    return StatusProbe(
+        ok=True,
+        source=source,
+        connections=connections,
+        user_agent=_as_str(payload.get("user_agent")),
+        protocol_version=_as_int(payload.get("protocol_version")),
+        sync_status=_as_str(payload.get("sync_status")),
+        height=_as_int(tip.get("height")),
+        tip_hash=_as_str(tip.get("last_block_pushed")),
+        difficulty=(
+            Difficulty.model_validate(raw_difficulty)
+            if isinstance(raw_difficulty, dict)
+            else None
+        ),
+    )
+
+
+async def probe_status(
+    client: httpx.AsyncClient,
+    insecure_client: httpx.AsyncClient,
+    resolved: Resolved,
+    *,
+    timeout: float,
+    skip_v1: bool = False,
+) -> StatusProbe:
+    """Peers, sync state and agent: `GET /v1/status`, else owner `get_status`.
+
+    4.1.0-1 answers the first without auth. A stock 4.1.0 returns 401 there and
+    serves the same struct, wrapped in `result.Ok`, from `POST /v2/owner`. The
+    fallback is only tried when the first endpoint gave an HTTP answer: a host
+    that timed out once will time out twice, and the poller's budget is per sweep.
+
+    `skip_v1` is the poller remembering that a node only answers the fallback, so
+    a steady state costs one request per node per sweep, not two.
+    """
+    errors: list[str] = []
+    sources = [StatusSource.OWNER] if skip_v1 else [StatusSource.V1, StatusSource.OWNER]
+    for source in sources:
+        try:
+            response = await _status_request(
+                client, insecure_client, resolved, source, timeout
+            )
+        except _NoAnswer as exc:
+            errors.append(f"{source.label}: {exc}")
+            break
+        if response.status_code == 429:
+            # Rate limited: asking the same host again at once is the wrong answer.
+            errors.append(f"{source.label}: rate limited (HTTP 429)")
+            break
+        if response.status_code >= 400:
+            errors.append(f"{source.label}: HTTP {response.status_code}")
+            continue
+        try:
+            body = response.json()
+        except ValueError:
+            errors.append(f"{source.label}: response was not JSON")
+            continue
+        if source is StatusSource.OWNER:
+            body, error = _unwrap(body)
+            if body is None:
+                errors.append(f"{source.label}: {error}")
+                continue
+        result = _parse_status(body, source)
+        if result.ok:
+            return result
+        errors.append(f"{source.label}: {result.error}")
+    return StatusProbe(ok=False, error="; ".join(errors) or "no answer")

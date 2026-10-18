@@ -220,13 +220,13 @@ def test_uptime_is_rounded_but_never_zeroed() -> None:
 # before Version moved into a shared slot. Both were found by screenshotting. These
 # assertions are the cheap version of that.
 
-_COLUMNS = 10
-"""Tracks declared on `.rows` in app.css: dot, host, m1, m2, m3, location, latency,
-24h, recent checks, state.
+_COLUMNS = 11
+"""Tracks declared on `.rows` in app.css: dot, host, m1, m2, m3, peers, location,
+latency, 24h, recent checks, state.
 
-No eleventh for the expander: `.row-toggle` is absolutely positioned and only becomes
+No twelfth for the expander: `.row-toggle` is absolutely positioned and only becomes
 visible on keyboard focus, so it is out of flow and occupies no column. An empty header
-cell for it would invent an eleventh implicit track."""
+cell for it would invent a twelfth implicit track."""
 
 
 def _header_cells(html: str, group: str) -> list[str]:
@@ -325,3 +325,40 @@ def test_source_url_is_configurable(snapshot: Snapshot) -> None:
     fork = Settings(source_url="https://example.org/fork/epic-status")
     html = render_board(snapshot=snapshot, settings=fork)
     assert '<a href="https://example.org/fork/epic-status">Source</a>' in html
+
+
+def test_node_status_renders_peers_and_details(snapshot: Snapshot) -> None:
+    from epic_status.models import Difficulty, StatusProbe, StatusSource
+
+    ok, down = snapshot.nodes
+    ok.peers = 43
+    ok.tip_agrees = False
+    ok.status_probe = StatusProbe(
+        ok=True,
+        source=StatusSource.OWNER,
+        connections=43,
+        user_agent="MW/Epic 4.1.0",
+        protocol_version=2,
+        sync_status="header_sync",
+        height=3_721_000,
+        tip_hash="f829" + "0" * 60,
+        difficulty=Difficulty(cuckatoo=1, cuckaroo=2, progpow=8151982727395403865, randomx=4),
+    )
+    down.status_probe = StatusProbe(
+        ok=False, error="/v1/status: HTTP 401; owner get_status: HTTP 403"
+    )
+    html = render_board(snapshot=snapshot, settings=SETTINGS)
+
+    row_ok = html.split('id="row-a.example"', 1)[1].split('id="row-b.example"', 1)[0]
+    assert 'data-field="peers"' in row_ok and "<em>peers</em>43" in row_ok
+    assert "syncing headers" in row_ok
+    assert "MW/Epic 4.1.0 · protocol 2" in row_ok
+    assert "f829000000…" in row_ok
+    assert "differs from other nodes at this height" in row_ok
+    assert "progpow 8,151,982,727,395,403,865" in row_ok
+    assert "owner get_status" in row_ok
+
+    row_down = html.split('id="row-b.example"', 1)[1].split("</li>", 1)[0]
+    assert "<em>peers</em>—" in row_down
+    assert 'title="Status unavailable"' in row_down
+    assert "unavailable · /v1/status: HTTP 401; owner get_status: HTTP 403" in html

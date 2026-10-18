@@ -123,6 +123,12 @@ class Settings(BaseSettings):
     behind an explicit opt-in."""
 
     http_timeout_s: float = 4.0
+    status_timeout_s: float = 3.0
+    """Node status call (peers). Shorter than `http_timeout_s`: it runs every sweep
+    in the background, and a slow answer is simply the previous one for a tick."""
+    status_v1_retry_s: float = 600.0
+    """A node that only answers owner `get_status` has `/v1/status` retried this
+    often, so an operator upgrading to 4.1.0-1 is picked up without a restart."""
     pool_timeout_s: float = 12.0
     """Pools only. Their stats APIs are slow by nature; see `probes.pool`."""
     ws_timeout_s: float = 8.0

@@ -1444,6 +1444,7 @@ pre {
                                and at 4.5rem it overflowed its track and printed past
                                the column to its right. */
       4rem                  /* version, same column in every table */
+      4rem                  /* peers: nodes only; an empty slot for the other kinds */
       5rem                  /* location: sized for the `unknown` chip, not for a flag */
       9.5rem                /* latency: 4.25rem number + 0.5rem gap + 3.5rem bar = 8.25rem
                                of content, plus the 1rem column gap deducted below. At 7rem
@@ -1489,28 +1490,31 @@ pre {
     .row-meta > .m3 {
       grid-column: 5;
     }
-    .row-meta > .m-where {
+    .row-meta > .m4 {
       grid-column: 6;
     }
-    .row-meta > .m-lat {
+    .row-meta > .m-where {
       grid-column: 7;
+    }
+    .row-meta > .m-lat {
+      grid-column: 8;
     }
     .group-node .row-up,
     .group-epicbox .row-up,
     .group-pool .row-up {
-      grid-column: 8;
+      grid-column: 9;
       grid-row: 1;
     }
     .group-node .row-spark,
     .group-epicbox .row-spark,
     .group-pool .row-spark {
-      grid-column: 9;
+      grid-column: 10;
       grid-row: 1;
     }
     .group-node .row-state,
     .group-epicbox .row-state,
     .group-pool .row-state {
-      grid-column: 10;
+      grid-column: 11;
       grid-row: 1;
     }
     .group-node .row-why,
@@ -1521,7 +1525,7 @@ pre {
     }
   }
 
-  /* Fallback without subgrid: the same ten tracks per row. Columns can drift by a pixel or
+  /* Fallback without subgrid: the same eleven tracks per row. Columns can drift by a pixel or
      two between rows, which is the old behaviour and still legible — the page does not
      collapse into one stacked column, which an unsupported `subgrid` keyword alone would
      have caused. */
@@ -1529,12 +1533,12 @@ pre {
     .row,
     .row-head {
       grid-template-columns:
-        auto minmax(9rem, 1fr) 6.5rem 7.25rem 4rem 5rem 9.5rem 4rem
+        auto minmax(9rem, 1fr) 6.5rem 7.25rem 4rem 4rem 5rem 9.5rem 4rem
         minmax(4rem, 1.4fr) 5.5rem;
       grid-template-areas:
-        'dot host m1 m2 m3 where lat up spark state'
-        '.   why  why why why why why why why why'
-        'det det  det det det det det det det det';
+        'dot host m1 m2 m3 m4 where lat up spark state'
+        '.   why  why why why why why why why why why'
+        'det det  det det det det det det det det det';
     }
 
     .row-meta > .m-where {
@@ -1601,7 +1605,8 @@ pre {
   }
   .row-head > .h-m1,
   .row-head > .h-m2,
-  .row-head > .h-m3 {
+  .row-head > .h-m3,
+  .row-head > .h-m4 {
     text-align: right;
   }
   /* Centred, header and value both. The flag is a fixed-width picture in a 5rem track, so
@@ -3244,6 +3249,27 @@ input[data-state='failed'] {
   grid-column: span 2;
 }
 
+/* Four cumulative difficulties, one per line: the progpow figure alone is nineteen digits,
+   so the block takes two tracks at every width. */
+.d-facts .d-diff {
+  grid-column: span 2;
+}
+
+.d-facts .d-diff dd {
+  font-family: var(--font-mono);
+}
+
+.d-facts .d-diff dd span {
+  display: block;
+}
+
+/* A tip hash that disagrees with the other nodes at its height: the one fact in the panel
+   that can mean a fork, so it carries the warning ink as well as the words. */
+.d-facts .d-warn dd b {
+  color: var(--warn-ink);
+  font-weight: 500;
+}
+
 .d-facts dt {
   font-size: var(--t-micro);
   letter-spacing: 0.04em;
@@ -4414,6 +4440,14 @@ input[data-state='failed'] {
     font-size: var(--t-small);
   }
 
+  /* A node's readout has a fifth value, peers, which is never more than three digits and
+     takes the narrowest track. Version gives up a little; "4.1.0" is five characters. */
+  .group-node .row-meta {
+    grid-template-columns:
+      minmax(0, 1fr) minmax(0, 0.85fr) minmax(0, 0.72fr) minmax(0, 1.08fr) minmax(0, 1fr)
+      1.75rem;
+  }
+
   /* Out of the row and into its panel: the location (the panel names the country, the
      city and the network), the node's height (the hero gives the tip, and "vs tip" says
      how far off this node is), and the empty slot that keeps Version aligned in the
@@ -4540,23 +4574,24 @@ input[data-state='failed'] {
 
 /* ---------------------------------------------------- the console at 900-1079px
  *
- * The ten tracks need about 960px with the shell's padding, and the table switches on at
+ * The eleven tracks need about 1020px with the shell's padding, and the table switches on at
  * 900, so between the two the State column was pushed past the table's right edge and
  * clipped by its rounded border — "Online" cut to "Onlin" on a small laptop or a tablet in
  * landscape. Measured, not inferred: at 900px the state cell ended 41px outside the table.
  *
- * Two things give way in this range, both of which return at 1080px: the latency bar (the
- * number stays) and the recent-checks strip (24h and 1h uptime stay beside it). Losing
+ * Three things give way in this range, all of which return at 1080px: the latency bar (the
+ * number stays), the recent-checks strip (24h and 1h uptime stay beside it) and the
+ * location flag (it moves into the row's panel). Losing
  * either costs a glance; losing the state word, or a hostname broken after ".co", costs
  * the answer.
  *
- * The strip's track is kept at 1rem rather than removed: every row subgrids onto these ten
+ * The strip's track is kept at 1rem rather than removed: every row subgrids onto these eleven
  * tracks by line number, and 1rem is exactly the column gap the subgrid takes back out of
  * it, so the cell is zero wide and nothing else has to be renumbered. */
 @media (min-width: 900px) and (max-width: 1079px) {
   .rows {
     grid-template-columns:
-      auto minmax(9rem, 1fr) 6.5rem 7.25rem 4rem 5rem 5.5rem 4rem
+      auto minmax(9rem, 1fr) 6.5rem 7.25rem 4rem 4rem 1rem 5.5rem 4rem
       1rem 5.5rem;
   }
 
@@ -4564,9 +4599,23 @@ input[data-state='failed'] {
     .row,
     .row-head {
       grid-template-columns:
-        auto minmax(9rem, 1fr) 6.5rem 7.25rem 4rem 5rem 5.5rem 4rem
+        auto minmax(9rem, 1fr) 6.5rem 7.25rem 4rem 4rem 1rem 5.5rem 4rem
         1rem 5.5rem;
     }
+  }
+
+  /* Peers took the width the location flag had: the flag moves into the row's panel
+     here, as it does on a phone, and its track is zeroed the same way as the strip's. */
+  .row-meta > .m-where,
+  .row-head > .h-where {
+    visibility: hidden;
+    overflow: hidden;
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .d-facts .d-loc {
+    display: block;
   }
 
   .lat-bar {

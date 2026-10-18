@@ -129,6 +129,30 @@ class TargetBase(BaseModel):
     location: Location
 
 
+class NodeStatusCall(BaseModel):
+    ok: bool = Field(description="Whether either status endpoint answered usably.")
+    source: str | None = Field(
+        None,
+        description="`v1_status` (GET /v1/status, Epic 4.1.0-1) or `owner_get_status` "
+        "(the owner API's get_status, the fallback for a stock 4.1.0).",
+        examples=["v1_status"],
+    )
+    sync_status: str | None = Field(None, examples=["no_sync"])
+    user_agent: str | None = Field(None, examples=["MW/Epic 4.1.0"])
+    protocol_version: int | None = Field(None, examples=[2])
+    height: int | None = Field(None, examples=[3759223])
+    tip_hash: str | None = Field(None, description="`tip.last_block_pushed`.")
+    tip_agrees: bool | None = Field(
+        None,
+        description="Whether tip_hash matches the most common hash of the other nodes "
+        "at the same height. Null when no other node is at that height.",
+    )
+    total_difficulty: dict[str, int | None] | None = None
+    error: str | None = Field(
+        None, description="Why neither endpoint answered, per endpoint."
+    )
+
+
 class NodeStatus(TargetBase):
     height: int | None = Field(None, examples=[3721218])
     tip_lag: int | None = Field(
@@ -154,6 +178,15 @@ class NodeStatus(TargetBase):
         description="Whether the CORS preflight a browser wallet sends is accepted. "
         "Null until checked, or when the preflight could not be completed.",
         examples=[True],
+    )
+    peers: int | None = Field(
+        None,
+        description="Connected peers, from the node's status call. Null when neither "
+        "`/v1/status` nor owner `get_status` answered.",
+        examples=[43],
+    )
+    node_status: NodeStatusCall | None = Field(
+        None, description="The latest status call. Null before the first one returns."
     )
 
 

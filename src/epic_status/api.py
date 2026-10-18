@@ -1262,6 +1262,26 @@ def _serialise_target(status: TargetStatus) -> dict[str, Any]:
         row["node_version"] = status.node_version
         row["ipv6"] = status.ipv6.value if status.ipv6 is not None else None
         row["browser_access"] = status.browser_access
+        row["peers"] = status.peers
+        sp = status.status_probe
+        row["node_status"] = (
+            None
+            if sp is None
+            else {
+                "ok": sp.ok,
+                "source": sp.source.value if sp.source is not None else None,
+                "sync_status": sp.sync_status,
+                "user_agent": sp.user_agent,
+                "protocol_version": sp.protocol_version,
+                "height": sp.height,
+                "tip_hash": sp.tip_hash,
+                "tip_agrees": status.tip_agrees,
+                "total_difficulty": (
+                    sp.difficulty.model_dump() if sp.difficulty is not None else None
+                ),
+                "error": sp.error,
+            }
+        )
     elif target.kind is Kind.EPICBOX:
         row["protocol_version"] = status.protocol_version
         row["cert_expires_in_days"] = status.cert_expires_in_days

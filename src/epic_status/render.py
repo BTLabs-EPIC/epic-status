@@ -150,6 +150,7 @@ def _environment() -> Environment:
     env.filters["flag"] = lambda c: Markup(flag(c))
     env.filters["flag_title"] = flag_title
     env.filters["short_hash"] = _short_hash
+    env.filters["sync_label"] = _sync_label
     env.filters["lat_w"] = _lat_w
     env.filters["lat_band"] = _lat_band
     return env
@@ -371,6 +372,30 @@ def _epoch_ms(value: datetime | None) -> str:
 
 def _short_hash(value: str | None) -> str:
     return f"{value[:10]}…" if value else "—"
+
+
+# The node's `SyncStatus`, as the status API serialises it. Unknown values pass
+# through as written rather than being hidden: a new state is still a fact.
+_SYNC_LABEL = {
+    "no_sync": "in sync",
+    "initial": "starting",
+    "awaiting_peers": "waiting for peers",
+    "header_sync": "syncing headers",
+    "txhashset_download": "downloading chain state",
+    "txhashset_setup": "preparing chain state",
+    "txhashset_rangeproofs_validation": "validating range proofs",
+    "txhashset_kernels_validation": "validating kernels",
+    "txhashset_save": "saving chain state",
+    "txhashset_done": "chain state ready",
+    "body_sync": "syncing blocks",
+    "shutdown": "shutting down",
+}
+
+
+def _sync_label(value: str | None) -> str:
+    if not value:
+        return "—"
+    return _SYNC_LABEL.get(value, value.replace("_", " "))
 
 
 # ------------------------------------------------------------------- verdicts

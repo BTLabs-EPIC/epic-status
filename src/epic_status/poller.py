@@ -41,6 +41,8 @@ from .models import (
     Kind,
     NetworkSummary,
     NodeProbe,
+    StatusProbe,
+    StatusSource,
     PoolProbe,
     Reason,
     Snapshot,
@@ -58,7 +60,13 @@ from .net import (
     tcp_probe,
 )
 from .probes.epicbox import probe_relay
-from .probes.node import probe_cors, probe_header, probe_tip, probe_version
+from .probes.node import (
+    probe_cors,
+    probe_header,
+    probe_status,
+    probe_tip,
+    probe_version,
+)
 from .probes.pool import probe_pool
 from .chain import ChainTracker, HeaderFetch, canonical_tip
 from .events import EventTracker
@@ -131,6 +139,12 @@ class Poller:
         self._next_caps: dict[int, float] = {}
         self._ipv6: dict[int, IPv6] = {}
         self._cors: dict[int, bool | None] = {}
+        # Node status (peers). Latest result per node, the nodes with a call in
+        # flight (so a slow host never has two), and for nodes that only answer the
+        # owner fallback, when `/v1/status` is next worth asking.
+        self._status: dict[int, StatusProbe] = {}
+        self._status_inflight: set[int] = set()
+        self._status_v1_retry: dict[int, float] = {}
         self._p2p_alive: dict[int, bool] = {}
         self._cert_days: dict[int, int | None] = {}
         self._last_epicbox: dict[int, tuple[float, EpicboxProbe]] = {}
@@ -231,6 +245,7 @@ class Poller:
         # whole fleet — except tip age, which is "how old is *this chain's* newest
         # block" and is therefore spawned per chain below.
         self._spawn(self._refresh_versions(nodes, node_probes, now))
+        self._spawn(self._refresh_status(nodes, now))
         self._spawn(self._refresh_p2p(nodes, node_probes, now))
         self._spawn(self._refresh_certs(relays, now))
         self._spawn(self._refresh_geo(targets, now))
@@ -259,8 +274,12 @@ class Poller:
                 self._syncing.add(chain)
                 self._spawn(self._sync_chain(chain, chain_nodes, node_probes, canonical))
 
+            agreement = self._tip_agreement(chain_nodes, chain_probes)
             node_statuses = [
-                self._node_status(t, node_probes[t.slug], tip) for t in chain_nodes
+                self._node_status(
+                    t, node_probes[t.slug], tip, agreement.get(t.slug)
+                )
+                for t in chain_nodes
             ]
             relay_statuses = [
                 self._relay_status(t, relay_probes[t.slug]) for t in chain_relays
@@ -449,6 +468,81 @@ class Poller:
                 )
         self._last_pool[target.id] = (asyncio.get_running_loop().time(), probe)
         return probe
+
+    async def _refresh_status(self, nodes: list[Target], now: float) -> None:
+        """One status call per node per sweep, in the background.
+
+        Every node, reachable or not by `get_tip`: a node whose foreign API is
+        closed may still answer `/v1/status`. A node with a call still in flight is
+        skipped, so a host that hangs for the full timeout costs one request per
+        timeout, not one per sweep.
+        """
+        due = [
+            t for t in nodes if t.id is not None and t.id not in self._status_inflight
+        ]
+        await asyncio.gather(*(self._one_status(t, now) for t in due))
+
+    async def _one_status(self, target: Target, now: float) -> None:
+        assert self._client is not None and self._insecure is not None
+        assert target.id is not None
+        self._status_inflight.add(target.id)
+        try:
+            resolved = await self._resolve(target.endpoint)
+            if isinstance(resolved, TargetRejected):
+                self._status[target.id] = StatusProbe(ok=False, error=resolved.message)
+                return
+            skip_v1 = now < self._status_v1_retry.get(target.id, 0.0)
+            async with self._sem:
+                result = await probe_status(
+                    self._client,
+                    self._insecure,
+                    resolved,
+                    timeout=self.settings.status_timeout_s,
+                    skip_v1=skip_v1,
+                )
+            if result.source is StatusSource.OWNER and not skip_v1:
+                self._status_v1_retry[target.id] = now + self.settings.status_v1_retry_s
+            elif result.source is StatusSource.V1:
+                self._status_v1_retry.pop(target.id, None)
+            elif not result.ok and skip_v1:
+                # The fallback stopped answering: start from `/v1/status` again.
+                self._status_v1_retry.pop(target.id, None)
+            self._status[target.id] = result
+        finally:
+            self._status_inflight.discard(target.id)
+
+    def _tip_agreement(
+        self, nodes: list[Target], probes: dict[str, NodeProbe]
+    ) -> dict[str, bool]:
+        """Per node of one chain: does its tip hash match the majority of the
+        *other* nodes at the same height?
+
+        Each node's tip is taken from its status call when there is one — that is
+        the hash the details panel shows — and from this sweep's `get_tip`
+        otherwise. A node with no peer at its height is left out: agreement with
+        nobody is not a fact worth printing.
+        """
+        tips: dict[str, tuple[int, str]] = {}
+        for t in nodes:
+            assert t.id is not None
+            status = self._status.get(t.id)
+            if status and status.ok and status.height is not None and status.tip_hash:
+                tips[t.slug] = (status.height, status.tip_hash)
+                continue
+            probe = probes.get(t.slug)
+            if probe and probe.ok and probe.height is not None and probe.tip_hash:
+                tips[t.slug] = (probe.height, probe.tip_hash)
+        result: dict[str, bool] = {}
+        for slug, (height, tip_hash) in tips.items():
+            counts: dict[str, int] = {}
+            for other, (h, other_hash) in tips.items():
+                if other != slug and h == height:
+                    counts[other_hash] = counts.get(other_hash, 0) + 1
+            if counts:
+                # A tie counts as agreement for every side of it: with no majority
+                # there is nothing to be the odd one out from.
+                result[slug] = counts.get(tip_hash, 0) == max(counts.values())
+        return result
 
     async def _refresh_versions(
         self, nodes: list[Target], probes: dict[str, NodeProbe], now: float
@@ -697,7 +791,11 @@ class Poller:
     # ------------------------------------------------------------------ statuses
 
     def _node_status(
-        self, target: Target, probe: NodeProbe, tip: int | None
+        self,
+        target: Target,
+        probe: NodeProbe,
+        tip: int | None,
+        tip_agrees: bool | None = None,
     ) -> TargetStatus:
         assert target.id is not None
         row = self.db.conn.execute(
@@ -723,6 +821,7 @@ class Poller:
             p2p_alive=self._p2p_alive.get(target.id),
         )
 
+        status_probe = self._status.get(target.id)
         status = TargetStatus(
             target=target,
             state=state,
@@ -735,6 +834,13 @@ class Poller:
             node_version=row["node_version"],
             ipv6=self._ipv6.get(target.id),
             browser_access=self._cors.get(target.id),
+            peers=(
+                status_probe.connections
+                if status_probe is not None and status_probe.ok
+                else None
+            ),
+            status_probe=status_probe,
+            tip_agrees=tip_agrees,
             last_checked_at=datetime.now(UTC),
             last_ok_at=datetime.now(UTC) if probe.ok else parse_iso(row["last_ok_at"]),
             last_error=None if probe.ok else (probe.error or row["last_error"]),

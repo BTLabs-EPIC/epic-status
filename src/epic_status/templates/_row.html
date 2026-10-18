@@ -75,6 +75,16 @@
           {% endif %}>
       <em>version</em>{{ status.node_version or '—' }}
     </span>
+    {#
+      Connected peers, from the status call. An em dash when neither status endpoint
+      answered: the rest of the row is from `get_tip` and stands on its own, and the
+      panel says why.
+    #}
+    <span class="m m4" data-field="peers" data-slug="{{ t.slug }}"
+          data-sort="{{ status.peers if status.peers is not none else -1 }}"
+          {% if status.peers is none and status.status_probe %}title="Status unavailable"{% endif %}>
+      <em>peers</em>{{ status.peers | thousands }}
+    </span>
 
     {% elif kind == Kind.POOL %}
     <span class="m m1" data-field="miners" data-slug="{{ t.slug }}"
@@ -98,6 +108,7 @@
     {# A pool reports no version of its own. The slot stays, so Version is the same column
        in every table. #}
     <span class="m m3 m-empty" aria-hidden="true"></span>
+    <span class="m m4 m-empty" aria-hidden="true"></span>
 
     {% else %}
     {#
@@ -147,6 +158,7 @@
           {% endif %}>
       <em>version</em>{{ status.protocol_version or '—' }}
     </span>
+    <span class="m m4 m-empty" aria-hidden="true"></span>
     {% endif %}
 
     {{ where(t) }}
@@ -326,15 +338,58 @@
         <dd>{{ status.height | thousands }}</dd>
       </div>
       {% endif %}
-      <div class="d-narrow">
+      <div class="d-narrow d-loc">
         <dt>location</dt>
         <dd class="d-where">{{ t.geo.display_country | flag }}<span>{{ t.geo.display_country | flag_title }}</span></dd>
       </div>
 
-      {% if kind == Kind.NODE and status.tip_hash %}
-      <div>
+      {% set sp = status.status_probe if kind == Kind.NODE else none %}
+      {% set shown_hash = (sp.tip_hash if sp and sp.ok and sp.tip_hash else status.tip_hash) if kind == Kind.NODE else none %}
+      {% if shown_hash %}
+      <div{% if status.tip_agrees == false %} class="d-warn"{% endif %}>
         <dt>tip hash</dt>
-        <dd><code title="{{ status.tip_hash }}">{{ status.tip_hash | short_hash }}</code></dd>
+        <dd><code title="{{ shown_hash }}">{{ shown_hash | short_hash }}</code>
+          {%- if status.tip_agrees == true %} · matches other nodes
+          {%- elif status.tip_agrees == false %} · <b>differs from other nodes at this height</b>
+          {%- endif %}</dd>
+      </div>
+      {% endif %}
+
+      {#
+        The status call: peers are in the row, the rest is here. When neither endpoint
+        answered, one line says so and why; the facts above still come from `get_tip`.
+      #}
+      {% if sp and sp.ok %}
+      {% if sp.sync_status %}
+      <div>
+        <dt>sync</dt>
+        <dd>{{ sp.sync_status | sync_label }}</dd>
+      </div>
+      {% endif %}
+      {% if sp.user_agent or sp.protocol_version is not none %}
+      <div>
+        <dt>agent</dt>
+        <dd>{{ sp.user_agent or '—' }}{% if sp.protocol_version is not none %} · protocol {{ sp.protocol_version }}{% endif %}</dd>
+      </div>
+      {% endif %}
+      {% if sp.difficulty %}
+      <div class="d-diff">
+        <dt>total difficulty</dt>
+        <dd>
+          {%- for algo in ('cuckatoo', 'cuckaroo', 'progpow', 'randomx') %}
+          {%- if sp.difficulty[algo] is not none %}<span>{{ algo }} {{ sp.difficulty[algo] | thousands }}</span>{% endif %}
+          {%- endfor %}
+        </dd>
+      </div>
+      {% endif %}
+      <div>
+        <dt>status from</dt>
+        <dd><code>{{ sp.source.label }}</code></dd>
+      </div>
+      {% elif sp %}
+      <div class="d-wide">
+        <dt>status</dt>
+        <dd>unavailable{% if sp.error %} · {{ sp.error }}{% endif %}</dd>
       </div>
       {% endif %}
 
@@ -529,6 +584,7 @@
   {{ th('m1', 'Height', 'h-m1') }}
   {{ th('m2', 'vs tip', 'h-m2') }}
   {{ th('m3', 'Version', 'h-m3') }}
+  {{ th('m4', 'Peers', 'h-m4') }}
   {% elif kind == Kind.POOL %}
   {{ th('m1', 'Miners', 'h-m1') }}
   {{ th('m2', 'Last block', 'h-m2') }}
@@ -539,20 +595,22 @@
     three tables and every column after it lines up across them.
   #}
   <span class="h-m3"></span>
+  <span class="h-m4"></span>
   {% else %}
   {{ th('m1', 'TLS expires', 'h-m1') }}
   <span class="h-m2"></span>
   {{ th('m3', 'Version', 'h-m3') }}
+  <span class="h-m4"></span>
   {% endif %}
   <span class="h-where">Location</span>
   {{ th('m-lat', 'Latency', 'h-lat') }}
   {{ th('row-up', '24h', 'h-up') }}
   <span class="h-spark">Recent checks</span>
   {#
-    Ten cells for ten tracks. There is no eleventh for the expander: `.row-toggle` is
+    Eleven cells for eleven tracks. There is no twelfth for the expander: `.row-toggle` is
     absolutely positioned and only becomes visible on keyboard focus — the whole row is
     the click target — so it is out of flow and occupies no column. An empty cell here
-    would invent an eleventh implicit track.
+    would invent a twelfth implicit track.
   #}
   <span class="h-state">State</span>
 </li>

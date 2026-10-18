@@ -454,6 +454,7 @@
         row.node_version,
         network ? network.released_node_version : null
       );
+      setField(slug, 'peers', fmtNum(row.peers), row.peers);
     } else if (row.kind === 'pool') {
       setField(slug, 'miners', fmtNum(row.miners), row.miners);
       /* No height and no tip comparison: a pool's block height is the last block it

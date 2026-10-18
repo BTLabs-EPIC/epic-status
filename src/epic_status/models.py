@@ -216,6 +216,42 @@ class VersionProbe(BaseModel):
     error: str | None = None
 
 
+class StatusSource(str, enum.Enum):
+    """Which endpoint answered a node's status call.
+
+    Epic 4.1.0-1 serves `GET /v1/status` without auth. A stock 4.1.0 answers that
+    with 401 but still serves the same struct through the owner API's `get_status`,
+    which needs no secret on 4.x. Recorded because the second is a fallback an
+    operator may not know is open, and the reader of the details should see which
+    one produced the numbers."""
+
+    V1 = "v1_status"
+    OWNER = "owner_get_status"
+
+    @property
+    def label(self) -> str:
+        return "/v1/status" if self is StatusSource.V1 else "owner get_status"
+
+
+class StatusProbe(BaseModel):
+    """One node status call: peers, sync state, agent and the node's own tip.
+
+    The one place peer counts come from. `ok=False` means neither endpoint
+    answered usably; the row keeps everything `get_tip` gave it and says only
+    that status is unavailable."""
+
+    ok: bool
+    source: StatusSource | None = None
+    connections: int | None = None
+    user_agent: str | None = None
+    protocol_version: int | None = None
+    sync_status: str | None = None
+    height: int | None = None
+    tip_hash: str | None = None
+    difficulty: Difficulty | None = None
+    error: str | None = None
+
+
 class BlockHeader(BaseModel):
     """One block header, as the foreign API's `get_header` returns it.
 
@@ -563,6 +599,14 @@ class TargetStatus(BaseModel):
     browser_access: bool | None = None
     """Nodes only: whether the CORS preflight a web wallet sends is accepted. None
     until measured, or when the preflight itself could not be completed."""
+    peers: int | None = None
+    """Nodes only: `connections` from the status call. None when it did not answer."""
+    status_probe: StatusProbe | None = None
+    """Nodes only: the latest status call, or None before the first one returns."""
+    tip_agrees: bool | None = None
+    """Nodes only: whether this node's tip hash matches the most common hash among
+    the other nodes of its chain at the same height. None when no other node is at
+    that height, so there is nothing to compare against."""
 
     # Pool-only. On one flat model with the other kinds' fields for the same reason
     # they are: the board renders one row shape and the alternative is a union type
