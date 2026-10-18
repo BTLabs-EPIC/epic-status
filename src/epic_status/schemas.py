@@ -147,7 +147,6 @@ class NodeStatusCall(BaseModel):
         description="Whether tip_hash matches the most common hash of the other nodes "
         "at the same height. Null when no other node is at that height.",
     )
-    total_difficulty: dict[str, int | None] | None = None
     error: str | None = Field(
         None, description="Why neither endpoint answered, per endpoint."
     )

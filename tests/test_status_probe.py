@@ -88,8 +88,6 @@ async def test_v1_status_parses(clients: Any) -> None:
     assert probe.sync_status == "no_sync"
     assert probe.height == 3759223
     assert probe.tip_hash == STATUS["tip"]["last_block_pushed"]
-    assert probe.difficulty is not None
-    assert probe.difficulty.progpow == 8151982727395403865
     # One request, carrying the hostname only as Host.
     assert v1.call_count == 1
     assert v1.calls[0].request.headers["host"] == "node.epiccash.com"

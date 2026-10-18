@@ -3249,25 +3249,90 @@ input[data-state='failed'] {
   grid-column: span 2;
 }
 
-/* Four cumulative difficulties, one per line: the progpow figure alone is nineteen digits,
-   so the block takes two tracks at every width. */
-.d-facts .d-diff {
-  grid-column: span 2;
+/* ------------------------------------------------------------ node panel
+ *
+ * One fixed structure for every node (see `node_facts` in _row.html): three labelled
+ * groups, each a two-column list with the label right beside its value. The label track
+ * is a fixed width rather than max-content so the values line up down a group and across
+ * the three groups alike. Stacked on a phone; side by side from 900px. */
+.d-groups {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-16) var(--sp-32);
 }
 
-.d-facts .d-diff dd {
+.d-group {
+  min-width: 0;
+}
+
+.d-group-h {
+  margin: 0 0 var(--sp-8);
+  padding-bottom: var(--sp-4);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--t-micro);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.d-list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  gap: var(--sp-6) var(--sp-12);
+  align-items: baseline;
+}
+
+/* The wrappers exist for the markup (a class on one fact); the grid belongs to the list. */
+.d-list > div {
+  display: contents;
+}
+
+.d-list dt {
+  font-size: var(--t-small);
+  color: var(--ink-dim);
+}
+
+.d-list dd {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--t-small);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.d-list dd code {
   font-family: var(--font-mono);
+  font-size: var(--t-small);
+  color: var(--code-ink);
+  background: var(--code-bg);
+  padding: var(--sp-2) var(--sp-6);
+  border-radius: 3px;
 }
 
-.d-facts .d-diff dd span {
-  display: block;
+.d-list .d-where {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
 }
 
 /* A tip hash that disagrees with the other nodes at its height: the one fact in the panel
    that can mean a fork, so it carries the warning ink as well as the words. */
-.d-facts .d-warn dd b {
+.d-warn dd b {
   color: var(--warn-ink);
   font-weight: 500;
+}
+
+@media (min-width: 900px) {
+  .d-groups {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.1fr) minmax(0, 0.9fr);
+  }
+
+  .d-list .d-narrow {
+    display: none;
+  }
 }
 
 .d-facts dt {

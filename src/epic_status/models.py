@@ -248,7 +248,6 @@ class StatusProbe(BaseModel):
     sync_status: str | None = None
     height: int | None = None
     tip_hash: str | None = None
-    difficulty: Difficulty | None = None
     error: str | None = None
 
 

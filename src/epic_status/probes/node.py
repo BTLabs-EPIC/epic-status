@@ -446,7 +446,6 @@ def _parse_status(payload: Any, source: StatusSource) -> StatusProbe:
         return StatusProbe(ok=False, error="no connections in status")
     tip = payload.get("tip")
     tip = tip if isinstance(tip, dict) else {}
-    raw_difficulty = tip.get("total_difficulty")
     return StatusProbe(
         ok=True,
         source=source,
@@ -456,11 +455,6 @@ def _parse_status(payload: Any, source: StatusSource) -> StatusProbe:
         sync_status=_as_str(payload.get("sync_status")),
         height=_as_int(tip.get("height")),
         tip_hash=_as_str(tip.get("last_block_pushed")),
-        difficulty=(
-            Difficulty.model_validate(raw_difficulty)
-            if isinstance(raw_difficulty, dict)
-            else None
-        ),
     )
 
 

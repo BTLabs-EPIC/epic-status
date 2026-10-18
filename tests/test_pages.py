@@ -328,7 +328,7 @@ def test_source_url_is_configurable(snapshot: Snapshot) -> None:
 
 
 def test_node_status_renders_peers_and_details(snapshot: Snapshot) -> None:
-    from epic_status.models import Difficulty, StatusProbe, StatusSource
+    from epic_status.models import StatusProbe, StatusSource
 
     ok, down = snapshot.nodes
     ok.peers = 43
@@ -342,7 +342,6 @@ def test_node_status_renders_peers_and_details(snapshot: Snapshot) -> None:
         sync_status="header_sync",
         height=3_721_000,
         tip_hash="f829" + "0" * 60,
-        difficulty=Difficulty(cuckatoo=1, cuckaroo=2, progpow=8151982727395403865, randomx=4),
     )
     down.status_probe = StatusProbe(
         ok=False, error="/v1/status: HTTP 401; owner get_status: HTTP 403"
@@ -355,7 +354,7 @@ def test_node_status_renders_peers_and_details(snapshot: Snapshot) -> None:
     assert "MW/Epic 4.1.0 · protocol 2" in row_ok
     assert "f829000000…" in row_ok
     assert "differs from other nodes at this height" in row_ok
-    assert "progpow 8,151,982,727,395,403,865" in row_ok
+    assert "total difficulty" not in row_ok
     assert "owner get_status" in row_ok
 
     row_down = html.split('id="row-b.example"', 1)[1].split("</li>", 1)[0]

@@ -1276,9 +1276,6 @@ def _serialise_target(status: TargetStatus) -> dict[str, Any]:
                 "height": sp.height,
                 "tip_hash": sp.tip_hash,
                 "tip_agrees": status.tip_agrees,
-                "total_difficulty": (
-                    sp.difficulty.model_dump() if sp.difficulty is not None else None
-                ),
                 "error": sp.error,
             }
         )

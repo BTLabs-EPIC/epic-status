@@ -304,6 +304,9 @@
 {% set url = probe_url(t) %}
 <div class="detail" id="d-{{ t.slug }}" hidden>
   <div class="detail-in">
+    {% if kind == Kind.NODE %}
+    {{ node_facts(status) }}
+    {% else %}
     <dl class="d-facts">
       {#
         The endpoint is first and not forced onto its own line: with the tracks capped at
@@ -325,73 +328,12 @@
       </div>
       {% endif %}
 
-      {#
-        Two facts that are columns in the table and leave the row on a phone, where the row
-        keeps only what a reader compares down the list: the height (the hero already gives
-        the tip, and the row's "vs tip" says how far off this one is) and the location.
-        `d-narrow` hides them again on a desktop, where the table shows them, so the panel
-        still never repeats its row.
-      #}
-      {% if kind == Kind.NODE %}
-      <div class="d-narrow">
-        <dt>height</dt>
-        <dd>{{ status.height | thousands }}</dd>
-      </div>
-      {% endif %}
+      {# Location is a column in the table and leaves the row on a phone; `d-narrow`
+         hides it again on a desktop, so the panel never repeats its row. #}
       <div class="d-narrow d-loc">
         <dt>location</dt>
         <dd class="d-where">{{ t.geo.display_country | flag }}<span>{{ t.geo.display_country | flag_title }}</span></dd>
       </div>
-
-      {% set sp = status.status_probe if kind == Kind.NODE else none %}
-      {% set shown_hash = (sp.tip_hash if sp and sp.ok and sp.tip_hash else status.tip_hash) if kind == Kind.NODE else none %}
-      {% if shown_hash %}
-      <div{% if status.tip_agrees == false %} class="d-warn"{% endif %}>
-        <dt>tip hash</dt>
-        <dd><code title="{{ shown_hash }}">{{ shown_hash | short_hash }}</code>
-          {%- if status.tip_agrees == true %} · matches other nodes
-          {%- elif status.tip_agrees == false %} · <b>differs from other nodes at this height</b>
-          {%- endif %}</dd>
-      </div>
-      {% endif %}
-
-      {#
-        The status call: peers are in the row, the rest is here. When neither endpoint
-        answered, one line says so and why; the facts above still come from `get_tip`.
-      #}
-      {% if sp and sp.ok %}
-      {% if sp.sync_status %}
-      <div>
-        <dt>sync</dt>
-        <dd>{{ sp.sync_status | sync_label }}</dd>
-      </div>
-      {% endif %}
-      {% if sp.user_agent or sp.protocol_version is not none %}
-      <div>
-        <dt>agent</dt>
-        <dd>{{ sp.user_agent or '—' }}{% if sp.protocol_version is not none %} · protocol {{ sp.protocol_version }}{% endif %}</dd>
-      </div>
-      {% endif %}
-      {% if sp.difficulty %}
-      <div class="d-diff">
-        <dt>total difficulty</dt>
-        <dd>
-          {%- for algo in ('cuckatoo', 'cuckaroo', 'progpow', 'randomx') %}
-          {%- if sp.difficulty[algo] is not none %}<span>{{ algo }} {{ sp.difficulty[algo] | thousands }}</span>{% endif %}
-          {%- endfor %}
-        </dd>
-      </div>
-      {% endif %}
-      <div>
-        <dt>status from</dt>
-        <dd><code>{{ sp.source.label }}</code></dd>
-      </div>
-      {% elif sp %}
-      <div class="d-wide">
-        <dt>status</dt>
-        <dd>unavailable{% if sp.error %} · {{ sp.error }}{% endif %}</dd>
-      </div>
-      {% endif %}
 
       {#
         Measured, not read from DNS: IPv6 is the same probe repeated against the AAAA
@@ -403,13 +345,6 @@
       <div>
         <dt>IPv6</dt>
         <dd>{{ {'yes': 'yes', 'unreachable': 'AAAA record, not answering', 'absent': 'no'}[status.ipv6.value] }}</dd>
-      </div>
-      {% endif %}
-
-      {% if kind == Kind.NODE and status.browser_access is not none %}
-      <div>
-        <dt>browser access</dt>
-        <dd>{{ 'allowed (CORS)' if status.browser_access else 'blocked (CORS)' }}</dd>
       </div>
       {% endif %}
 
@@ -498,6 +433,7 @@
       </div>
       {% endif %}
     </dl>
+    {% endif %}
 
     {#
       The live half. Server-side latency is measured from one place; this is measured from
@@ -516,6 +452,77 @@
   </div>
 </div>
 {% endmacro %}
+
+{#
+  A node's panel: one fixed structure for every node.
+
+  The shared flow above emits only the fields that exist, so two nodes put the same fact
+  in different places and a reader comparing them had to hunt. Here every node gets the
+  same three groups with the same rows in the same order; a value that is missing reads
+  "—" in its usual place. The note, the one free-text item, is last and only when set.
+
+  Each group is a two-column list, label beside value, so a label is never a track's
+  width away from what it names.
+#}
+{% macro node_facts(status) %}
+{% set t = status.target %}
+{% set sp = status.status_probe %}
+{% set live = sp is not none and sp.ok %}
+{% set shown_hash = sp.tip_hash if live and sp.tip_hash else status.tip_hash %}
+<div class="d-groups">
+  <section class="d-group" aria-label="Connection">
+    <h4 class="d-group-h">Connection</h4>
+    <dl class="d-list">
+      <div><dt>endpoint</dt><dd><code>{{ t.endpoint }}</code></dd></div>
+      <div><dt>p2p</dt><dd>{% if t.p2p %}<code>{{ t.p2p }}</code>{% else %}—{% endif %}</dd></div>
+      <div><dt>location</dt><dd class="d-where">{{ t.geo.display_country | flag }}<span>{{ t.geo.display_country | flag_title }}{% if t.geo.display_city %} · {{ t.geo.display_city }}{% endif %}</span></dd></div>
+      <div><dt>network</dt><dd>{{ t.geo.display_provider or '—' }}{% if t.geo.display_provider and t.geo.asn %} · {{ t.geo.asn }}{% endif %}</dd></div>
+      {# Measured, not read from DNS: IPv6 is the same probe against the AAAA address
+         alone, and browser access is the CORS preflight a web wallet sends. #}
+      <div><dt>IPv6</dt><dd>{% if status.ipv6 is not none %}{{ {'yes': 'yes', 'unreachable': 'AAAA record, not answering', 'absent': 'no'}[status.ipv6.value] }}{% else %}—{% endif %}</dd></div>
+      <div><dt>browser access</dt><dd>{% if status.browser_access is not none %}{{ 'allowed (CORS)' if status.browser_access else 'blocked (CORS)' }}{% else %}—{% endif %}</dd></div>
+    </dl>
+  </section>
+
+  <section class="d-group" aria-label="Chain">
+    <h4 class="d-group-h">Chain</h4>
+    <dl class="d-list">
+      {# A table column on the desktop; here for the phone, where the row drops it. #}
+      <div class="d-narrow"><dt>height</dt><dd>{{ status.height | thousands }}</dd></div>
+      <div><dt>sync</dt><dd>{{ sp.sync_status | sync_label if live else '—' }}</dd></div>
+      <div{% if status.tip_agrees == false %} class="d-warn"{% endif %}>
+        <dt>tip hash</dt>
+        <dd>{% if shown_hash %}<code title="{{ shown_hash }}">{{ shown_hash | short_hash }}</code>
+          {%- if status.tip_agrees == true %} · matches other nodes
+          {%- elif status.tip_agrees == false %} · <b>differs from other nodes at this height</b>
+          {%- endif %}{% else %}—{% endif %}</dd>
+      </div>
+      <div><dt>agent</dt><dd>{% if live and sp.user_agent %}{{ sp.user_agent }}{% if sp.protocol_version is not none %} · protocol {{ sp.protocol_version }}{% endif %}{% else %}—{% endif %}</dd></div>
+      {# Which endpoint answered; when neither did, why, in the same place. #}
+      <div><dt>status from</dt><dd>{% if live %}<code>{{ sp.source.label }}</code>{% elif sp %}unavailable{% if sp.error %} · {{ sp.error }}{% endif %}{% else %}—{% endif %}</dd></div>
+    </dl>
+  </section>
+
+  <section class="d-group" aria-label="History">
+    <h4 class="d-group-h">History</h4>
+    <dl class="d-list">
+      <div><dt>30d uptime</dt><dd>{{ status.uptime_30d | pct }}</dd></div>
+      <div><dt>failures in a row</dt><dd>{{ status.consecutive_failures }}</dd></div>
+      {# Absolute and without `data-age`: the tick loop rewrites anything carrying one. #}
+      <div><dt>last checked</dt><dd>{{ status.last_checked_at | utc if status.last_checked_at else '—' }}</dd></div>
+      {# Other vantage points, beside this one's verdict rather than folded into it. #}
+      {% for v in status.vantages %}
+      <div><dt>from {{ v.prober_id }}</dt><dd>{% if v.ok %}answered{% if v.latency_ms is not none %} · {{ v.latency_ms | ms }}{% endif %}{% else %}failed{% if v.error %} · {{ v.error }}{% endif %}{% endif %}</dd></div>
+      {% endfor %}
+      <div><dt>listed since</dt><dd>{{ t.created_at | day if t.created_at else '—' }}</dd></div>
+      {% if t.notes %}
+      <div class="d-note-row"><dt>note</dt><dd>{{ t.notes }}</dd></div>
+      {% endif %}
+    </dl>
+  </section>
+</div>
+{% endmacro %}
+
 
 
 {#
