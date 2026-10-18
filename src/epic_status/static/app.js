@@ -29,6 +29,11 @@
 (function () {
   'use strict';
 
+  /* The live state in the tab, set only here so link-preview crawlers, which do not run
+     scripts, always see the static served title. Board page only. */
+  var LIVE_TITLE = document.documentElement.getAttribute('data-live-title');
+  if (LIVE_TITLE) document.title = LIVE_TITLE;
+
   var POLL_MS = 5000;
   /* Was 1000. Nothing left on the page resolves finer than the poll: the freshness
      indicator states its cadence instead of counting up to it, and the only ages still

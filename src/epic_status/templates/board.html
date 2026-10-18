@@ -5,9 +5,8 @@
 {% import "_row.html" as r with context %}
 {% import "_quickcheck.html" as qcm with context %}
 {% set page = 'board' %}
-{# No title override: the base title is already "Epic Cash Status — Degraded", which is
-   what a tab wants. The headline sentence belongs on the page, not in 20 characters of
-   truncated tab. #}
+{# No title override. The served title is the bare site name for link previews; the
+   live state is put in the tab by app.js from `data-live-title`. See base.html. #}
 
 {% block content %}
 {#

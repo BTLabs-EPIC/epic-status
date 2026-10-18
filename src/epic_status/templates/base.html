@@ -3,19 +3,27 @@
   script in app.js before first paint so there is no flash of the wrong mode.
 #}
 <!doctype html>
-<html lang="en" data-theme="dark" data-epicbox-protocol="{{ epicbox_protocol }}" data-cert-warn-days="{{ cert_warn_days }}" data-chain="{{ chain.value }}">
+<html lang="en" data-theme="dark" data-epicbox-protocol="{{ epicbox_protocol }}" data-cert-warn-days="{{ cert_warn_days }}" data-chain="{{ chain.value }}"{% if page == 'board' %} data-live-title="{{ site_name }} — {{ status_word }}"{% endif %}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     {#
-      The title and the icon are the same judgement twice: "Epic Cash Status — Degraded"
-      next to an amber tile. Both come from `verdict.tone`, so a tab can never show a
-      state the page disagrees with. Sub-pages override the title with their own section
-      name; the icon is state-coloured everywhere, which is the point — the reader who is
-      on /history still wants to know the chain fell over.
+      The served title is static on purpose. Link previews (Telegram, Slack, X) freeze
+      whatever title they crawled, so "Epic Cash Status — Degraded" lived on in chats long
+      after the network recovered. The live state goes into the tab from app.js after
+      load, via `data-live-title`, which crawlers never run. The icon stays
+      state-coloured: no preview uses it as text.
     #}
-    <title>{% block title %}{{ site_name }} — {{ status_word }}{% endblock %}</title>
+    <title>{% block title %}{{ site_name }}{% endblock %}</title>
     <meta name="description" content="Live health and uptime for Epic Cash public nodes, Epicbox relays and mining pools." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="{{ site_name }}" />
+    <meta property="og:title" content="{{ site_name }}" />
+    <meta property="og:description" content="Live status of Epic Cash nodes, epicbox relays and services" />
+    <meta property="og:url" content="{{ site_url }}" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="{{ site_name }}" />
+    <meta name="twitter:description" content="Live status of Epic Cash nodes, epicbox relays and services" />
     <meta name="color-scheme" content="dark light" />
     <link rel="stylesheet" href="/static/app.css?v={{ asset_v }}" />
     <link rel="icon" href="/static/{{ status_icon }}" type="image/svg+xml" />
