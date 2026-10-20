@@ -31,12 +31,12 @@ class Cadence(BaseModel):
     The asymmetry between nodes and relays is not an oversight. One `get_tip` is
     468 bytes and 0.2 requests per second per host — trivial. An Epicbox
     connection is meant to live for hours: a wallet opens one and speaks once a
-    minute. Connect-and-drop every 5 seconds is a churn pattern no legitimate
+    minute. Connect-and-drop every few seconds is a churn pattern no legitimate
     client produces, and operators fronting with nginx commonly cap concurrent
     connections in single digits.
     """
 
-    node_tip_s: float = 5.0
+    node_tip_s: float = 30.0
     node_version_s: float = 300.0
     node_p2p_s: float = 30.0
     epicbox_s: float = 30.0
@@ -64,19 +64,19 @@ class Thresholds(BaseModel):
 
     down_after_failures: int = 3
     """Consecutive failed checks before red. One dropped packet is not an outage,
-    and at a 5-second cadence three checks is 15 seconds of honesty."""
+    and at the 30-second node cadence three checks is 90 seconds of honesty."""
 
     cert_warn_days: int = 14
     stale_snapshot_s: float = 120.0
     remove_after_failures: int = 500
     """A submitted target that has never once succeeded and has failed this many
-    consecutive checks deletes itself. At 5 seconds that is about 40 minutes.
+    consecutive checks deletes itself. At 30 seconds that is about four hours.
     Seed targets are exempt."""
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="EPIC_STATUS_", env_file=".env", extra="ignore"
+        env_prefix="EPIC_STATUS_", env_nested_delimiter="__", env_file=".env", extra="ignore"
     )
 
     bind: str = "127.0.0.1"

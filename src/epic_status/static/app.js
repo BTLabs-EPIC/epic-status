@@ -168,7 +168,7 @@
     var state = age > STALE_BAD_S ? 'bad' : age > STALE_WARN_S ? 'warn' : 'ok';
     var next =
       state === 'ok'
-        ? 'Updated every ' + POLL_MS / 1000 + ' sec'
+        ? 'Updated every ' + (parseInt(stamp.getAttribute('data-cadence'), 10) || POLL_MS / 1000) + ' sec'
         : state === 'warn'
           ? 'Catching up...'
           : 'Last updated: ' + clock(lastOk) + ' ago';

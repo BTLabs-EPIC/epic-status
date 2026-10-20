@@ -96,16 +96,16 @@
     Freshness, carried by the icon rather than by moving text.
 
     The number used to tick every second — "0:01", "0:02" — which is motion for its own
-    sake: the reader does not need per-second resolution on when a 5-second poll last
+    sake: the reader does not need per-second resolution on when a 30-second poll last
     landed, and the digits changing under the headline read as a fault. The cadence is now
     stated once, as a constant, and the dot alone reacts: it pulses briefly when an update
     lands, and changes colour and wording only when something is actually wrong.
 
-      up to date   green, "Updated every 5 sec"
+      up to date   green, "Updated every 30 sec"
       over 60s     amber, "Catching up..."
       over 5 min   red,   "Last updated: M:SS ago"
   #}
-  <p class="hero-stamp" data-live="ok">
+  <p class="hero-stamp" data-live="ok" data-cadence="{{ cadence_s }}">
     <span class="live-dot" aria-hidden="true"></span>
     <span class="live-text" data-field="live">Updated every {{ cadence_s }} sec</span>
     <span class="sr-only" data-field="live-sr" role="status" aria-live="polite"></span>

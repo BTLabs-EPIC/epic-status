@@ -479,6 +479,6 @@ def register(app: FastAPI, service: Service) -> None:
             target_id, country=country, provider=provider, city=city
         )
         # No cache to invalidate: `Poller.sweep` reads `db.targets()` at the top of
-        # every sweep, so an edit is live on the next one — within 5 seconds for a node.
+        # every sweep, so an edit is live on the next one — within 30 seconds for a node.
         log.info("admin edited target %s", target.slug)
         return _dashboard(session, notice=f"{target.display_host} updated.")

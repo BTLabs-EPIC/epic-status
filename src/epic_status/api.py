@@ -87,7 +87,7 @@ traffic to any monitored server, which is why it is open.
 
 ### Cadence
 
-Nodes are checked every 5 seconds with a single unauthenticated `get_tip`. Epicbox
+Nodes are checked every 30 seconds with a single unauthenticated `get_tip`. Epicbox
 relays every 30 seconds, by opening a WebSocket and reading the one `Challenge` frame
 the relay sends unprompted. Mining pools every 30 seconds, with one GET against the
 pool's own stats endpoint. Node versions every 5 minutes, certificate expiry every 6
