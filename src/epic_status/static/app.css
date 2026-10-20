@@ -4867,3 +4867,96 @@ input[data-state='failed'] {
     padding: var(--sp-2) 0 var(--sp-8);
   }
 }
+
+/* ------------------------------------------------------------------ copy button
+   One small monochrome icon after a value people copy. Quiet at rest, full ink on hover or
+   focus. The visible glyph is 22px; a pseudo-element grows the hit area to 40px on touch
+   screens without moving anything. "Copied" is a tooltip from data-what, shown with the
+   tick for 1.5 s (app.js toggles .is-copied). */
+.copy-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: var(--sp-4);
+  padding: 0;
+  vertical-align: middle;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-dim);
+  opacity: 0.55;
+  cursor: pointer;
+  transition: opacity 0.12s, color 0.12s, background-color 0.12s;
+}
+.copy-btn[hidden] {
+  display: none;
+}
+.copy-btn:hover,
+.copy-btn:focus-visible,
+.copy-btn.is-copied {
+  opacity: 1;
+  color: var(--ink);
+  background: var(--code-bg);
+}
+.copy-btn:focus-visible {
+  outline: 2px solid var(--ink-dim);
+  outline-offset: 1px;
+}
+.copy-btn .copy-i-done,
+.copy-btn.is-copied .copy-i-copy {
+  display: none;
+}
+.copy-btn.is-copied .copy-i-done {
+  display: block;
+}
+.copy-btn.is-failed {
+  opacity: 1;
+}
+.copy-btn.is-copied::after,
+.copy-btn.is-failed::after {
+  content: 'Copied';
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body, inherit);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 5;
+}
+.copy-btn.is-failed::after {
+  content: 'Copy failed';
+}
+@media (pointer: coarse) {
+  .copy-btn {
+    opacity: 0.75;
+  }
+  .copy-btn::before {
+    content: '';
+    position: absolute;
+    inset: -9px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .copy-btn {
+    transition: none;
+  }
+}
+.copy-scratch {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}

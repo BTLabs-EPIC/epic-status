@@ -18,6 +18,7 @@
   the result is measured from that server and not from the reader.
 #}
 
+{% from '_copy.html' import copy_btn %}
 {% macro widget(qc, qc_input) %}
 <section class="qc{% if qc %} is-open{% endif %}" id="quick-check" aria-labelledby="qc-title" data-qc>
   <div class="qc-head">
@@ -213,7 +214,7 @@
   {% endif %}
 
   <p class="qc-foot">
-    {%- if r.address and r.address != r.host %}<span>{{ r.host }} → <code>{{ r.address }}</code></span>{% endif -%}
+    {%- if r.address and r.address != r.host %}<span>{{ r.host }} → <code>{{ r.address }}</code>{{ copy_btn(r.address, 'address') }}</span>{% endif -%}
     <span>Checked from {{ prober_id }}{% if prober_region and prober_region != 'unknown' %} ({{ prober_region }}){% endif %} at <time datetime="{{ r.checked_at | rfc3339 }}">{{ r.checked_at | utc }}</time></span>
     {%- if r.listed_slug %}<a href="#row-{{ r.listed_slug }}" data-qc-listed="{{ r.listed_slug }}">On this board</a>{% endif -%}
   </p>

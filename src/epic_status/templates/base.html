@@ -133,6 +133,7 @@
        polls mainnet's status.json regardless of which chain the page is showing, then
        writes mainnet's tip into a floonet board. A versioned URL makes a deploy
        impossible to half-apply. See render.asset_version. #}
+    <div class="sr-only" id="copy-live" role="status" aria-live="polite"></div>
     <script src="/static/app.js?v={{ asset_v }}" defer></script>
     {# Page-specific scripts. Only /admin has one, and it has no business loading on the
        public board. #}

@@ -26,6 +26,7 @@
   tap — `title` alone never reaches a keyboard or a phone. Always in the markup for a
   node and toggled with `hidden`, so a poll that crosses the threshold builds no DOM.
 #}
+{% from '_copy.html' import copy_btn %}
 {% macro peers_hint(status) %}
 {% set why = peers_note(status.awaiting_peers, status.tip_lag, status.consecutive_failures) %}
 <span class="peers-hint" data-field="peers-hint" data-slug="{{ status.target.slug }}"{% if not why %} hidden{% endif %}>
@@ -332,7 +333,7 @@
       #}
       <div class="d-url">
         <dt>endpoint</dt>
-        <dd><code>{{ t.endpoint }}</code></dd>
+        <dd><code>{{ t.endpoint }}</code>{{ copy_btn(t.endpoint, 'endpoint') }}</dd>
       </div>
 
       {% if t.p2p %}
@@ -341,7 +342,7 @@
          Spanning it on the desktop too pushed the facts onto a fourth row for nothing. #}
       <div class="d-tok">
         <dt>p2p</dt>
-        <dd><code>{{ t.p2p }}</code></dd>
+        <dd><code>{{ t.p2p }}</code>{{ copy_btn(t.p2p, 'P2P address') }}</dd>
       </div>
       {% endif %}
 
@@ -358,6 +359,12 @@
         "unreachable" is worded as a fault because it is one — a client that prefers
         IPv6 tries that address first and waits for it to time out.
       #}
+      {% if status.protocol_version %}
+      <div class="d-tok">
+        <dt>version</dt>
+        <dd><code>{{ status.protocol_version }}</code>{{ copy_btn(status.protocol_version, 'version') }}</dd>
+      </div>
+      {% endif %}
       {% if status.ipv6 is not none %}
       <div>
         <dt>IPv6</dt>
@@ -490,11 +497,11 @@
   <section class="d-group" aria-label="Connection">
     <h4 class="d-group-h">Connection</h4>
     <dl class="d-list">
-      <div><dt>endpoint</dt><dd><code>{{ t.endpoint }}</code></dd></div>
+      <div><dt>endpoint</dt><dd><code>{{ t.endpoint }}</code>{{ copy_btn(t.endpoint, 'endpoint') }}</dd></div>
       {# Behind a CDN the peer port is not proxied, so there is nothing to publish, and
          the registry's country and provider describe the proxy, not the node. #}
       {% set cdn = t.geo.cdn %}
-      <div><dt>p2p</dt><dd>{% if t.p2p %}<code>{{ t.p2p }}</code>{% elif cdn %}<span title="The peer port is not published for hosts behind a CDN">—</span> <span class="d-hint">not published</span>{% else %}—{% endif %}</dd></div>
+      <div><dt>p2p</dt><dd>{% if t.p2p %}<code>{{ t.p2p }}</code>{{ copy_btn(t.p2p, 'P2P address') }}{% elif cdn %}<span title="The peer port is not published for hosts behind a CDN">—</span> <span class="d-hint">not published</span>{% else %}—{% endif %}</dd></div>
       {% if cdn and not t.geo.country_manual %}
       <div><dt>location</dt><dd>behind {{ cdn }}</dd></div>
       <div><dt>network</dt><dd>behind {{ cdn }}</dd></div>
@@ -526,14 +533,15 @@
       {% endif %}
       <div{% if status.tip_agrees == false %} class="d-warn"{% endif %}>
         <dt>tip hash</dt>
-        <dd>{% if shown_hash %}<code title="{{ shown_hash }}">{{ shown_hash | short_hash }}</code>
+        <dd>{% if shown_hash %}<code title="{{ shown_hash }}">{{ shown_hash | short_hash }}</code>{{ copy_btn(shown_hash, 'tip hash') }}
           {%- if status.tip_agrees == true %} · matches other nodes
           {%- elif status.tip_agrees == false %} · <b>differs from other nodes at this height</b>
           {%- endif %}{% else %}—{% endif %}</dd>
       </div>
+      {% if status.node_version %}<div><dt>version</dt><dd><code>{{ status.node_version }}</code>{{ copy_btn(status.node_version, 'version') }}</dd></div>{% endif %}
       <div><dt>agent</dt><dd>{% if status.status_closed %}<span class="d-hint">not published</span>{% elif live and sp.user_agent %}{{ sp.user_agent }}{% if sp.protocol_version is not none %} · protocol {{ sp.protocol_version }}{% endif %}{% else %}—{% endif %}</dd></div>
       {# Which endpoint answered; when neither did, why, in the same place. #}
-      <div><dt>status from</dt><dd>{% if live %}<code>{{ sp.source.label }}</code>{% elif status.status_closed %}status API closed by operator <span class="d-hint">· {{ sp.error }}</span>{% elif sp %}unavailable{% if sp.error %} · {{ sp.error }}{% endif %}{% else %}—{% endif %}</dd></div>
+      <div><dt>status from</dt><dd>{% if live %}<code>{{ sp.source.label }}</code>{{ copy_btn(sp.source.label, 'status source') }}{% elif status.status_closed %}status API closed by operator <span class="d-hint">· {{ sp.error }}</span>{% elif sp %}unavailable{% if sp.error %} · {{ sp.error }}{% endif %}{% else %}—{% endif %}</dd></div>
     </dl>
   </section>
 

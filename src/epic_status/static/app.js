@@ -953,6 +953,60 @@
     openRow = row;
   }
 
+  /* ------------------------------------------------------------------ copy */
+
+  /* Delegated, so the server-rendered buttons and any the poll leaves in place all work
+     without wiring. Registered before the row handler and stops the event there: a copy
+     button inside a row must not open or close it. */
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      var area = document.createElement('textarea');
+      area.value = text;
+      area.setAttribute('readonly', '');
+      area.className = 'copy-scratch';
+      document.body.appendChild(area);
+      var focused = document.activeElement;
+      area.select();
+      area.setSelectionRange(0, text.length);
+      var ok = false;
+      try {
+        ok = document.execCommand('copy');
+      } catch (e) {
+        ok = false;
+      }
+      document.body.removeChild(area);
+      if (focused && focused.focus) focused.focus();
+      if (ok) resolve();
+      else reject(new Error('copy failed'));
+    });
+  }
+
+  document.addEventListener('click', function (event) {
+    var btn = event.target.closest && event.target.closest('.copy-btn');
+    if (!btn) return;
+    event.stopImmediatePropagation();
+    event.preventDefault();
+    var text = btn.getAttribute('data-copy') || '';
+    var live = document.getElementById('copy-live');
+    function show(ok) {
+      btn.classList.toggle('is-copied', ok);
+      btn.classList.toggle('is-failed', !ok);
+      if (live) live.textContent = ok ? 'Copied ' + btn.getAttribute('data-what') : 'Copy failed';
+      clearTimeout(btn._copyTimer);
+      btn._copyTimer = setTimeout(function () {
+        btn.classList.remove('is-copied', 'is-failed');
+        if (live) live.textContent = '';
+      }, 1500);
+    }
+    copyText(text).then(
+      function () { show(true); },
+      function () { show(false); }
+    );
+  }, true);
+
   document.addEventListener('click', function (event) {
     /* Inside an open panel is not a click on the row. Without this the Query button
        closes the panel it lives in. */
