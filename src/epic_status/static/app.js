@@ -524,7 +524,12 @@
         row.node_version,
         network ? network.released_node_version : null
       );
-      setField(slug, 'peers', fmtNum(row.peers), row.peers);
+      setField(
+        slug,
+        'peers',
+        row.peers === null && row.status_closed ? 'not public' : fmtNum(row.peers),
+        row.peers
+      );
       setPeersHint(slug, row);
     } else if (row.kind === 'pool') {
       setField(slug, 'miners', fmtNum(row.miners), row.miners);

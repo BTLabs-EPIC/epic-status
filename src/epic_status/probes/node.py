@@ -477,6 +477,7 @@ async def probe_status(
     a steady state costs one request per node per sweep, not two.
     """
     errors: list[str] = []
+    refused = 0
     sources = [StatusSource.OWNER] if skip_v1 else [StatusSource.V1, StatusSource.OWNER]
     for source in sources:
         try:
@@ -492,6 +493,8 @@ async def probe_status(
             break
         if response.status_code >= 400:
             errors.append(f"{source.label}: HTTP {response.status_code}")
+            if response.status_code in (401, 403):
+                refused += 1
             continue
         try:
             body = response.json()
@@ -507,4 +510,10 @@ async def probe_status(
         if result.ok:
             return result
         errors.append(f"{source.label}: {result.error}")
-    return StatusProbe(ok=False, error="; ".join(errors) or "no answer")
+    return StatusProbe(
+        ok=False,
+        error="; ".join(errors) or "no answer",
+        # Closed only when every endpoint tried said no. One refusal beside a timeout
+        # or a bad body proves nothing about the other.
+        closed=refused == len(errors) and refused == len(sources),
+    )

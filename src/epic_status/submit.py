@@ -36,6 +36,7 @@ from .config import Settings
 from .db import Database
 from .models import Kind, Source, Target
 from .net import TargetRejected, resolve_endpoint
+from .notify import Notifier
 from .probes.epicbox import domain_is_addressable, probe_relay
 from .probes.node import probe_tip
 
@@ -169,6 +170,7 @@ async def accept(
     submitter_address: str,
     salt: str,
     country: str | None = None,
+    notifier: Notifier | None = None,
 ) -> str:
     """Validate and queue a submission. Returns the message to show.
 
@@ -230,6 +232,9 @@ async def accept(
     )
     if inserted is None:
         raise SubmissionError(f"{display} has already been submitted and is being checked.")
+
+    if notifier is not None:
+        notifier.submitted(kind.value, display)
 
     if kind is Kind.POOL:
         # Do not promise probing. A pool is not auto-promoted, and a message saying

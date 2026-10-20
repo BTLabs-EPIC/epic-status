@@ -54,6 +54,7 @@ from .render import (
     render_quickcheck_result,
     render_submit,
 )
+from .notify import Notifier
 from .submit import SubmissionError, Validator, accept
 from .upstream import ReleaseWatcher
 from .vantage import Ingest, Rejected, parse_keys
@@ -142,6 +143,7 @@ class Service:
         self.releases = ReleaseWatcher(self.db, settings)
         self.poller = Poller(self.db, settings, self.releases)
         self.validator = Validator(self.db, settings)
+        self.notifier = Notifier(settings)
         # Parsed here so a malformed key list fails at boot, not on the first push.
         keys = parse_keys(settings.prober_keys)
         self.ingest = Ingest(self.db, keys) if keys else None
@@ -231,6 +233,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
                 await service.quickcheck.aclose()
+                await service.notifier.aclose()
         service.db.close()
 
     app = FastAPI(
@@ -970,6 +973,7 @@ async def _do_submit(
             submitter_address=client_address(request),
             salt=service.submitter_salt,
             country=country or None,
+            notifier=service.notifier,
         )
     except SubmissionError as exc:
         return None, str(exc)
@@ -1263,12 +1267,15 @@ def _serialise_target(status: TargetStatus) -> dict[str, Any]:
         row["ipv6"] = status.ipv6.value if status.ipv6 is not None else None
         row["browser_access"] = status.browser_access
         row["peers"] = status.peers
+        row["status_closed"] = status.status_closed
         sp = status.status_probe
         row["node_status"] = (
             None
             if sp is None
             else {
                 "ok": sp.ok,
+                "closed": sp.closed,
+                "derived_sync": status.derived_sync,
                 "source": sp.source.value if sp.source is not None else None,
                 "sync_status": sp.sync_status,
                 "user_agent": sp.user_agent,

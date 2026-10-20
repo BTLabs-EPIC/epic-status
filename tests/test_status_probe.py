@@ -277,3 +277,24 @@ async def test_awaiting_peers_marks_only_after_two_calls_in_a_row(
         seen.append(streak_after(sync))
 
     assert seen == [False, True, False, False]
+
+
+@respx.mock
+async def test_both_endpoints_refusing_means_closed_by_operator(clients: Any) -> None:
+    respx.get(V1_URL).mock(return_value=httpx.Response(403, text="<html>blocked</html>"))
+    respx.post(OWNER_URL).mock(return_value=httpx.Response(403, text="<html>blocked</html>"))
+
+    probe = await _status(clients)
+
+    assert probe.ok is False and probe.closed is True
+    assert "HTTP 403" in (probe.error or "")
+
+
+@respx.mock
+async def test_a_refusal_beside_a_server_error_is_not_closed(clients: Any) -> None:
+    respx.get(V1_URL).mock(return_value=httpx.Response(403))
+    respx.post(OWNER_URL).mock(return_value=httpx.Response(500))
+
+    probe = await _status(clients)
+
+    assert probe.ok is False and probe.closed is False

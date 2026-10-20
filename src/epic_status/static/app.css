@@ -3407,6 +3407,11 @@ input[data-state='failed'] {
   border-radius: 3px;
 }
 
+/* A qualifier beside a value ("not published"): quieter than the value itself. */
+.d-list .d-hint {
+  color: var(--ink-dim);
+}
+
 .d-list .d-where {
   display: flex;
   align-items: center;

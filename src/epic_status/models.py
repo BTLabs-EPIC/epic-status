@@ -249,6 +249,10 @@ class StatusProbe(BaseModel):
     height: int | None = None
     tip_hash: str | None = None
     error: str | None = None
+    closed: bool = False
+    """Every endpoint tried answered 401 or 403: the operator has closed `/v1/status` and
+    the owner API on purpose, usually behind a CDN or a firewall rule. Not a fault and
+    not "unavailable": the node is serving the foreign API, which is all it promised."""
 
 
 class BlockHeader(BaseModel):
@@ -283,6 +287,29 @@ class HeaderProbe(BaseModel):
 
 
 # ----------------------------------------------------------------------- enrichment
+
+
+_CDN_PROVIDERS = (
+    ("cloudflare", "Cloudflare"),
+    ("fastly", "Fastly"),
+    ("akamai technologies", "Akamai"),
+    ("cloudfront", "CloudFront"),
+    ("imperva", "Imperva"),
+    ("incapsula", "Imperva"),
+    ("sucuri", "Sucuri"),
+    ("stackpath", "StackPath"),
+    ("bunny", "Bunny CDN"),
+)
+_CDN_ASNS = {
+    "13335": "Cloudflare",
+    "209242": "Cloudflare",
+    "54113": "Fastly",
+    "20940": "Akamai",
+    "16625": "Akamai",
+    "19551": "Imperva",
+    "30148": "Sucuri",
+    "60068": "Bunny CDN",
+}
 
 
 class GeoInfo(BaseModel):
@@ -329,6 +356,21 @@ class GeoInfo(BaseModel):
     @property
     def display_provider(self) -> str | None:
         return self.provider_manual or self.provider
+
+    @property
+    def cdn(self) -> str | None:
+        """The CDN or reverse-proxy network this host sits behind, or None.
+
+        From the registered holder of the resolved address (and its ASN when known), so
+        it needs no extra request. For such a host the registry's country is the
+        proxy's, not the node's: the page says "behind Cloudflare" instead of guessing.
+        """
+        provider = (self.display_provider or "").lower()
+        for needle, name in _CDN_PROVIDERS:
+            if needle in provider:
+                return name
+        asn = (self.asn or "").upper().removeprefix("AS")
+        return _CDN_ASNS.get(asn)
 
     @property
     def display_city(self) -> str | None:
@@ -606,6 +648,21 @@ class TargetStatus(BaseModel):
     """Nodes only: the status call has reported `awaiting_peers` on at least two
     consecutive sweeps. Informational: it never changes `state`, uptime or failure
     counts — a node in that state is still answering and usually still at tip."""
+    @property
+    def status_closed(self) -> bool:
+        """Nodes only: the operator refuses the status endpoints (HTTP 401/403)."""
+        sp = self.status_probe
+        return sp is not None and not sp.ok and sp.closed
+
+    @property
+    def derived_sync(self) -> str | None:
+        """Sync state worked out from the foreign API's height against the fleet tip, for
+        a node whose own status endpoints are closed. None when it does not apply or the
+        node did not answer `get_tip`."""
+        if not self.status_closed or self.height is None or self.tip_lag is None:
+            return None
+        return "at tip" if self.tip_lag <= 0 else f"{self.tip_lag:,} behind"
+
     tip_agrees: bool | None = None
     """Nodes only: whether this node's tip hash matches the most common hash among
     the other nodes of its chain at the same height. None when no other node is at

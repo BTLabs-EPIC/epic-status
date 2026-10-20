@@ -67,6 +67,10 @@ Environment=EPIC_STATUS_PROBER_ID=btlabs-lon
 #     | sudo tee /etc/epic-status.env >/dev/null
 #   sudo chmod 600 /etc/epic-status.env && sudo systemctl restart epic-status
 EnvironmentFile=-/etc/epic-status.env
+# Telegram ping for new submissions: EPIC_STATUS_NOTIFY_URL and EPIC_STATUS_NOTIFY_TOKEN, a
+# scoped token for the feedback bot's POST /status/notify. Own file, root-owned, 0600.
+# Without it the ping is simply off; a submission never depends on it.
+EnvironmentFile=-/etc/epic-status-notify.env
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 

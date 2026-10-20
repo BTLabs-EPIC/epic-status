@@ -153,6 +153,14 @@ class Settings(BaseSettings):
     the default — means `POST /api/v1/probes` is not registered at all. Secrets come
     from `epic-status prober-key`; see `vantage`."""
 
+    notify_url: str = ""
+    """Feedback-bot endpoint that DMs the operator about a new submission, e.g.
+    `http://100.125.95.78:8790/status/notify`. Empty (the default) disables it."""
+
+    notify_token: str = ""
+    """Scoped bearer token for `notify_url`. Set it only through the systemd
+    `EnvironmentFile` (/etc/epic-status-notify.env, mode 600), never in git."""
+
     submissions_enabled: bool = True
     max_pending_submissions: int = 200
     submit_probes_required: int = 3

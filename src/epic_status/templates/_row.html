@@ -98,8 +98,9 @@
     #}
     <span class="m m4" data-field="peers" data-slug="{{ t.slug }}"
           data-sort="{{ status.peers if status.peers is not none else -1 }}"
-          {% if status.peers is none and status.status_probe %}title="Status unavailable"{% endif %}>
-      <em>peers</em>{{ status.peers | thousands }}
+          {% if status.status_closed %}title="Status API closed by operator; peers are not public"
+          {% elif status.peers is none and status.status_probe %}title="Status unavailable"{% endif %}>
+      <em>peers</em>{% if status.peers is none and status.status_closed %}not public{% else %}{{ status.peers | thousands }}{% endif %}
     </span>
 
     {% elif kind == Kind.POOL %}
@@ -490,9 +491,17 @@
     <h4 class="d-group-h">Connection</h4>
     <dl class="d-list">
       <div><dt>endpoint</dt><dd><code>{{ t.endpoint }}</code></dd></div>
-      <div><dt>p2p</dt><dd>{% if t.p2p %}<code>{{ t.p2p }}</code>{% else %}—{% endif %}</dd></div>
+      {# Behind a CDN the peer port is not proxied, so there is nothing to publish, and
+         the registry's country and provider describe the proxy, not the node. #}
+      {% set cdn = t.geo.cdn %}
+      <div><dt>p2p</dt><dd>{% if t.p2p %}<code>{{ t.p2p }}</code>{% elif cdn %}<span title="The peer port is not published for hosts behind a CDN">—</span> <span class="d-hint">not published</span>{% else %}—{% endif %}</dd></div>
+      {% if cdn and not t.geo.country_manual %}
+      <div><dt>location</dt><dd>behind {{ cdn }}</dd></div>
+      <div><dt>network</dt><dd>behind {{ cdn }}</dd></div>
+      {% else %}
       <div><dt>location</dt><dd class="d-where">{{ t.geo.display_country | flag }}<span>{{ t.geo.display_country | flag_title }}{% if t.geo.display_city %} · {{ t.geo.display_city }}{% endif %}</span></dd></div>
       <div><dt>network</dt><dd>{{ t.geo.display_provider or '—' }}{% if t.geo.display_provider and t.geo.asn %} · {{ t.geo.asn }}{% endif %}</dd></div>
+      {% endif %}
       {# Measured, not read from DNS: IPv6 is the same probe against the AAAA address
          alone, and browser access is the CORS preflight a web wallet sends. #}
       <div><dt>IPv6</dt><dd>{% if status.ipv6 is not none %}{{ {'yes': 'yes', 'unreachable': 'AAAA record, not answering', 'absent': 'no'}[status.ipv6.value] }}{% else %}—{% endif %}</dd></div>
@@ -508,7 +517,9 @@
       {# Waiting for peers is a passing state on a node that is otherwise answering, so it
          reads in the warning ink with that said beside it, not as plain text that looks
          like a stuck node and not in the fault colour. #}
-      {% if live and sp.sync_status == 'awaiting_peers' %}
+      {% if status.status_closed %}
+      <div><dt>sync</dt><dd>{% if status.derived_sync %}{{ status.derived_sync }} <span class="d-hint">from the foreign API's tip</span>{% else %}—{% endif %}</dd></div>
+      {% elif live and sp.sync_status == 'awaiting_peers' %}
       <div class="d-note"><dt>sync</dt><dd><b>waiting for peers</b> · usually clears within seconds</dd></div>
       {% else %}
       <div><dt>sync</dt><dd>{{ sp.sync_status | sync_label if live else '—' }}</dd></div>
@@ -520,9 +531,9 @@
           {%- elif status.tip_agrees == false %} · <b>differs from other nodes at this height</b>
           {%- endif %}{% else %}—{% endif %}</dd>
       </div>
-      <div><dt>agent</dt><dd>{% if live and sp.user_agent %}{{ sp.user_agent }}{% if sp.protocol_version is not none %} · protocol {{ sp.protocol_version }}{% endif %}{% else %}—{% endif %}</dd></div>
+      <div><dt>agent</dt><dd>{% if status.status_closed %}<span class="d-hint">not published</span>{% elif live and sp.user_agent %}{{ sp.user_agent }}{% if sp.protocol_version is not none %} · protocol {{ sp.protocol_version }}{% endif %}{% else %}—{% endif %}</dd></div>
       {# Which endpoint answered; when neither did, why, in the same place. #}
-      <div><dt>status from</dt><dd>{% if live %}<code>{{ sp.source.label }}</code>{% elif sp %}unavailable{% if sp.error %} · {{ sp.error }}{% endif %}{% else %}—{% endif %}</dd></div>
+      <div><dt>status from</dt><dd>{% if live %}<code>{{ sp.source.label }}</code>{% elif status.status_closed %}status API closed by operator <span class="d-hint">· {{ sp.error }}</span>{% elif sp %}unavailable{% if sp.error %} · {{ sp.error }}{% endif %}{% else %}—{% endif %}</dd></div>
     </dl>
   </section>
 

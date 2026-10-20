@@ -43,6 +43,14 @@ operator = "Your name"
 ours = true
 ```
 
+### Notify the operator of new submissions (optional)
+
+Set `EPIC_STATUS_NOTIFY_URL` and `EPIC_STATUS_NOTIFY_TOKEN` to have a bot DM you one line
+(kind, host, time, link to `/admin`) for each new submission. The token is a scoped bearer
+token for a `POST` endpoint that accepts `{"kind", "host", "received", "link"}`; keep it in
+an `EnvironmentFile` outside git. If the endpoint is down the submission still succeeds and
+the notice is retried a few times over about six minutes, then dropped and logged.
+
 ### Run
 
 ```sh

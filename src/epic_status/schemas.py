@@ -137,6 +137,17 @@ class NodeStatusCall(BaseModel):
         "(the owner API's get_status, the fallback for a stock 4.1.0).",
         examples=["v1_status"],
     )
+    closed: bool = Field(
+        False,
+        description="Every status endpoint answered 401 or 403: the operator has closed "
+        "them on purpose. Not a fault; peers are then not public.",
+    )
+    derived_sync: str | None = Field(
+        None,
+        description="Only when `closed`: `at tip` or `N behind`, from the foreign API's "
+        "get_tip height against the network tip.",
+        examples=["at tip"],
+    )
     sync_status: str | None = Field(None, examples=["no_sync"])
     user_agent: str | None = Field(None, examples=["MW/Epic 4.1.0"])
     protocol_version: int | None = Field(None, examples=[2])
@@ -188,6 +199,9 @@ class NodeStatus(TargetBase):
         description="Connected peers, from the node's status call. Null when neither "
         "`/v1/status` nor owner `get_status` answered.",
         examples=[43],
+    )
+    status_closed: bool = Field(
+        False, description="The operator has closed the status endpoints (HTTP 401/403)."
     )
     node_status: NodeStatusCall | None = Field(
         None, description="The latest status call. Null before the first one returns."

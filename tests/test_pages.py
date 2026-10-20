@@ -388,3 +388,50 @@ def test_awaiting_peers_marker_and_sync_line(snapshot: Snapshot) -> None:
     row_down = html.split('id="row-b.example"', 1)[1].split("</li>", 1)[0]
     assert 'data-field="peers-hint"' in row_down
     assert row_down.split('data-field="peers-hint"', 1)[1].split(">", 1)[0].endswith(" hidden")
+
+
+def test_closed_status_api_and_cdn_node_read_as_a_choice_not_as_missing_data(
+    snapshot: Snapshot,
+) -> None:
+    """A node behind Cloudflare whose operator refuses /v1/status and the owner API:
+    sync comes from the foreign tip, peers are "not public", and location/network say
+    what they are instead of dashes."""
+    from epic_status.models import GeoInfo, StatusProbe
+
+    closed, other = snapshot.nodes
+    closed.target.geo = GeoInfo(provider="Cloudflare", country="US", asn="AS13335")
+    closed.tip_lag = 12
+    closed.status_probe = StatusProbe(
+        ok=False, closed=True, error="/v1/status: HTTP 403; owner get_status: HTTP 403"
+    )
+    html = render_board(snapshot=snapshot, settings=SETTINGS)
+
+    row = html.split('id="row-a.example"', 1)[1].split('id="row-b.example"', 1)[0]
+    assert "<em>peers</em>not public" in row
+    assert "12 behind" in row and "from the foreign API's tip" in row
+    assert "status API closed by operator" in row
+    assert "behind Cloudflare" in row and row.count("behind Cloudflare") == 2
+    assert "not published" in row
+    assert "unavailable ·" not in row
+
+    # The other node is unchanged.
+    row_other = html.split('id="row-b.example"', 1)[1].split("</li>", 1)[0]
+    assert "behind Cloudflare" not in row_other and "not public" not in row_other
+
+
+def test_derived_sync_at_tip_and_cdn_detection() -> None:
+    from epic_status.models import GeoInfo, StatusProbe
+
+    s = status(Kind.NODE, "n.example")
+    s.tip_lag = 0
+    s.status_probe = StatusProbe(ok=False, closed=True)
+    assert s.status_closed and s.derived_sync == "at tip"
+    s.tip_lag = 1_204
+    assert s.derived_sync == "1,204 behind"
+    s.status_probe = StatusProbe(ok=False, closed=False)
+    assert not s.status_closed and s.derived_sync is None
+
+    assert GeoInfo(provider="Cloudflare").cdn == "Cloudflare"
+    assert GeoInfo(provider="Cloudflare, Inc.").cdn == "Cloudflare"
+    assert GeoInfo(provider="Something", asn="AS54113").cdn == "Fastly"
+    assert GeoInfo(provider="Hetzner").cdn is None
