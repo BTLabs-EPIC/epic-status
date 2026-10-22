@@ -59,7 +59,7 @@ from .notify import Notifier
 from .submit import SubmissionError, Validator, accept
 from .upstream import ReleaseWatcher
 from .vantage import Ingest, Rejected, parse_keys
-from .web import client_address, cors, json_response, security_headers, stamp
+from .web import client_address, cors, json_response, onion_request, security_headers, stamp
 
 log = logging.getLogger("epic_status.api")
 
@@ -266,6 +266,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # itself broken to exactly the tools most likely to watch it.
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     app.state.service = service
+
+    @app.middleware("http")
+    async def mark_onion_requests(request: Request, call_next: Any) -> Any:
+        """See `web.onion_request`. The header is the onion nginx block's, nobody else's."""
+        token = onion_request.set(request.headers.get("x-epic-onion", "") == "1")
+        try:
+            return await call_next(request)
+        finally:
+            onion_request.reset(token)
 
     # ------------------------------------------------------------------ pages
 

@@ -1,0 +1,20 @@
+{#
+  The header mark, inline.
+
+  It was `<img src="/static/icon.svg">`, the same file the tab shows. On the onion mirror
+  that image did not appear for Patryk while every other asset did; a headless browser
+  through Tor loads it fine and every request on that page is same-origin, so the cause is
+  on the reading side (Tor Browser's stricter levels, image or SVG-as-image policy), not a
+  clearnet URL. An inline SVG needs no second request and nothing to allow: the mark is
+  part of the document. The favicon keeps the file, which is what a tab can show.
+
+  Same construction as icon.svg — tile carries the state, glyph carries the identity — and
+  the same four ramps, so the two never drift apart. The gradient id is namespaced: inline
+  SVG shares the page's id space, and every icon file uses `t`.
+#}
+{%- set ramp = {
+  "ok": ("#6ee7a8", "#40c057"),
+  "warn": ("#ffd166", "#c98a3e"),
+  "bad": ("#ff8f8f", "#e03131"),
+}.get(status_tone, ("#c3cbd6", "#6b7686")) -%}
+<svg class="brand-mark" viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" focusable="false"><linearGradient id="brand-ramp" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="{{ ramp[0] }}"/><stop offset="1" stop-color="{{ ramp[1] }}"/></linearGradient><rect width="32" height="32" rx="7" fill="url(#brand-ramp)"/><g fill="#12100d"><rect x="8" y="8" width="4" height="16"/><rect x="12" y="8" width="12" height="3.8"/><rect x="12" y="14.1" width="8" height="3.8"/><rect x="12" y="20.2" width="3.4" height="3.8"/><rect x="16.3" y="20.2" width="3.4" height="3.8"/><rect x="20.6" y="20.2" width="3.4" height="3.8"/></g></svg>

@@ -1,0 +1,26 @@
+# Source of truth: /home/bt/epic-status/ops/systemd/epic-status-tor.service
+[Unit]
+Description=Epic Cash status page: Tor onion service -> 127.0.0.1:13432 (nginx)
+After=network-online.target nginx.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=bt
+Group=bt
+SyslogIdentifier=epic-status-tor
+ExecStart=/home/bt/donations-epic-wallet/bin/tor/tor -f /home/bt/epic-status-tor/torrc
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

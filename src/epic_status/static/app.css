@@ -1429,8 +1429,17 @@ pre {
   color: var(--ink-dim);
 }
 
+/* Three rows — links, Tor mirror, credit — stacked with one even gap, each starting at
+   the left edge. Rows are flex so the onion glyph, the copy button and the separator sit
+   on the text's centre line rather than on its baseline. */
+.foot .shell {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-12);
+}
+
 .foot p {
-  margin: 0 0 var(--sp-8);
+  margin: 0;
   max-width: 70ch;
 }
 
@@ -2109,18 +2118,10 @@ pre {
  * interpret the numbers above: how often they are taken and from where.
  */
 
-.foot-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--sp-8) var(--sp-24);
-}
-
 .foot-nav {
   display: flex;
   flex-wrap: wrap;
   gap: 0 var(--sp-16);
-  margin-left: auto;
 }
 
 .foot-nav a {
@@ -2130,12 +2131,6 @@ pre {
 .foot-nav a:hover {
   color: var(--ink);
   text-decoration: underline;
-}
-
-@media (max-width: 560px) {
-  .foot-nav {
-    margin-left: 0;
-  }
 }
 
 
@@ -4731,10 +4726,6 @@ input[data-state='failed'] {
     align-items: center;
     min-height: 2.75rem;
   }
-
-  .foot-row {
-    row-gap: 0;
-  }
 }
 
 /* ---------------------------------------------------- the console at 900-1079px
@@ -4963,25 +4954,25 @@ input[data-state='failed'] {
 
 
 /* ------------------------------------------------------------ tor note, donate page */
-.foot-tor {
+.foot-tor,
+.foot-by {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-4) var(--sp-8);
-  margin: 0 0 var(--sp-12);
+}
+.foot-onion {
+  flex: 0 0 auto;
 }
 .foot-tor code {
   font-family: var(--font-mono);
 }
-.foot-tor a {
+.foot-by a {
   text-decoration: none;
 }
-.foot-tor a:hover {
+.foot-by a:hover {
   color: var(--ink);
   text-decoration: underline;
-}
-.foot-tor [hidden] {
-  display: none;
 }
 .donate-list {
   display: grid;

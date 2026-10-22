@@ -40,6 +40,7 @@ from .models import (
 from .probes.pool import ADAPTERS
 from .quickcheck import QuickCheckResult
 from .score import version_behind
+from .web import onion_request
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -663,6 +664,12 @@ def _base_context(
         # The tab's copy of the verdict: one word for the title, one file for the icon.
         "status_word": _STATUS_WORD.get(verdict.tone, "Starting up"),
         "status_icon": _STATUS_ICON.get(verdict.tone, "icon-unknown.svg"),
+        # The header mark is drawn inline from the tone (see _mark.html); the favicon
+        # is the file. Both come from the same verdict, so they cannot disagree.
+        "status_tone": verdict.tone,
+        # The footer's "Also on Tor" row is left out on the onion itself. See
+        # `web.onion_request` for how the request is told apart.
+        "onion": onion_request.get(),
         "generated_at": snapshot.generated_at if snapshot else None,
         "State": State,
         "Kind": Kind,

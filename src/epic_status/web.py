@@ -10,8 +10,24 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
+from contextvars import ContextVar
+
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
+
+onion_request: ContextVar[bool] = ContextVar("onion_request", default=False)
+"""True while rendering a request that arrived through the onion service.
+
+Set by the middleware in `api` from the `x-epic-onion` header, which only the onion
+nginx block sends (`ops/nginx/status-onion.conf`) and the clearnet block blanks. It
+decides one thing: the footer's "Also on Tor" row, which is advertising and is left out
+on the onion itself. Decided server-side rather than by a script reading
+`location.hostname`, because Tor Browser's stricter levels run no script at all and the
+row would have reappeared exactly for the readers it is pointless for.
+
+A clearnet client that sends the header itself gets a page without the row. Nothing is
+protected by it, so nothing is lost.
+"""
 
 
 def client_address(request: Request) -> str:

@@ -1,0 +1,7 @@
+# Tor for the status.btlabs.uk onion mirror. Own instance, separate from the donations wallet's.
+SocksPort 0
+DataDirectory /home/bt/epic-status-tor/data
+HiddenServiceDir /home/bt/epic-status-tor/hs
+HiddenServicePort 80 127.0.0.1:13432
+Log notice stdout
+AvoidDiskWrites 1

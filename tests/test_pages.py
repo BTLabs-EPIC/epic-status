@@ -321,6 +321,38 @@ def test_footer_links_to_the_public_repository(snapshot: Snapshot) -> None:
     assert f'href="{SETTINGS.source_url}#run-your-own-instance"' in api
 
 
+def test_footer_rows_and_the_tor_row_only_off_the_onion(snapshot: Snapshot) -> None:
+    """Links, then the Tor mirror, then the credit. The Tor row advertises the onion, so
+    the onion itself does not carry it — decided by the request flag, not by a script."""
+    from epic_status.web import onion_request
+
+    onion = "t6furoapbsowxp3hvmjwp223zenmauwldfv2noddih7bfuuavwyvaqad.onion"
+    html = render_board(snapshot=snapshot, settings=SETTINGS)
+    assert "Also on Tor:" in html
+    assert "t6furoapbsow…fuuavwyvaqad.onion" in html
+    assert f'data-copy="http://{onion}"' in html
+    assert "Created by BT Labs for Epic Cash" in html
+    assert html.index('class="foot-nav"') < html.index("Also on Tor:") < html.index("BT Labs")
+    assert '<a href="/donate">Donate</a>' in html
+    token = onion_request.set(True)
+    try:
+        on_onion = render_board(snapshot=snapshot, settings=SETTINGS)
+    finally:
+        onion_request.reset(token)
+    assert "Also on Tor" not in on_onion
+    assert onion not in on_onion
+    assert "Created by BT Labs for Epic Cash" in on_onion
+
+
+def test_header_mark_is_inline_and_matches_the_favicon(snapshot: Snapshot) -> None:
+    """The mark is drawn into the page (an external SVG image did not show on the onion
+    for some Tor readers) and uses the same ramp as the icon file the tab shows."""
+    html = render_board(snapshot=snapshot, settings=SETTINGS)
+    assert '<svg class="brand-mark"' in html
+    assert 'class="brand-mark" src=' not in html
+    assert 'href="/static/icon' in html
+
+
 def test_source_url_is_configurable(snapshot: Snapshot) -> None:
     fork = Settings(source_url="https://example.org/fork/epic-status")
     html = render_board(snapshot=snapshot, settings=fork)

@@ -1562,14 +1562,4 @@
     /* The server rendered a result into the page (the no-JavaScript path, or a reload of
        one): its region is already open; the close control just needs wiring, done above. */
   })(document.querySelector('[data-qc]'));
-  /* On the onion version the Tor note says so instead of advertising itself. */
-  if (/\.onion$/.test(location.hostname)) {
-    var tor = document.getElementById('foot-tor');
-    if (tor) {
-      var link = tor.querySelector('.foot-tor-link');
-      var here = tor.querySelector('.foot-tor-here');
-      if (link) link.hidden = true;
-      if (here) here.hidden = false;
-    }
-  }
 })();

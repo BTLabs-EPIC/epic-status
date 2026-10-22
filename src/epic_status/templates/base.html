@@ -36,10 +36,10 @@
     <header class="topbar">
       <div class="topbar-in">
         <a class="brand" href="/">
-          {# The same file the tab is showing, so the header mark and the favicon can
-             never disagree about the state. The glyph lives inside the SVG, which is why
-             there is no longer a letter here and no gradient in the CSS. #}
-          <img class="brand-mark" src="/static/{{ status_icon }}" alt="" width="28" height="28" />
+          {# Drawn inline from the same verdict as the favicon, so the header mark and
+             the tab can never disagree about the state. See _mark.html for why it is no
+             longer an <img>. #}
+          {% include '_mark.html' %}
           {{ site_name }}
         </a>
 
@@ -115,17 +115,24 @@
     <footer class="foot">
       <div class="shell">
         {% block footer_extra %}{% endblock %}
-        <p class="foot-tor" id="foot-tor"><span class="foot-tor-link">Also on Tor: <code title="http://t6furoapbsowxp3hvmjwp223zenmauwldfv2noddih7bfuuavwyvaqad.onion">t6furo…vaqad.onion</code>{{ copy_btn("http://t6furoapbsowxp3hvmjwp223zenmauwldfv2noddih7bfuuavwyvaqad.onion", "onion address") }}</span><span class="foot-tor-here" hidden>You are on the Tor version.</span><span class="foot-tor-sep" aria-hidden="true">·</span><a href="/donate">Donate</a></p>
-        <div class="foot-row">
-          <span>Created by btlabs for Epic Cash.</span>
-          <nav class="foot-nav" aria-label="Elsewhere">
-            <a href="/api">API</a>
-            <a href="/api/v1/status.json">status.json</a>
-            <a href="/feed.atom{{ chain_query }}">Incident feed</a>
-            <a href="{{ source_url }}">Source</a>
-            <a href="{{ source_url }}#run-your-own-instance">Run your own</a>
-          </nav>
-        </div>
+        {# Three rows, each its own line: the links, the Tor mirror, the credit. The
+           Tor row is advertising, so it is left out on the onion itself (`onion` is set
+           server-side, see web.onion_request — a script reading location.hostname would
+           not run on Tor Browser's stricter levels). The address shows 12 + 12 characters
+           so the row is about as wide as the links above it; the full one is a hover away
+           and on the clipboard. The onion glyph is a neutral drawing, not the Tor
+           Project's trademarked logo. #}
+        <nav class="foot-nav" aria-label="Elsewhere">
+          <a href="/api">API</a>
+          <a href="/api/v1/status.json">status.json</a>
+          <a href="/feed.atom{{ chain_query }}">Incident feed</a>
+          <a href="{{ source_url }}">Source</a>
+          <a href="{{ source_url }}#run-your-own-instance">Run your own</a>
+        </nav>
+        {% if not onion %}
+        <p class="foot-tor"><svg class="foot-onion" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 4.4C5.3 6 3.6 8 3.6 10.2a4.4 4.4 0 0 0 8.8 0C12.4 8 10.7 6 8 4.4Z"/><path d="M8 4.4c-1.1 2.2-1.7 4.1-1.7 5.8a1.7 1.7 0 0 0 3.4 0c0-1.7-.6-3.6-1.7-5.8Z"/><path d="M8 4.4V2.3M8 2.3 6.5 1.5M8 2.3l1.5-.8"/></svg><span>Also on Tor:</span> <code title="http://t6furoapbsowxp3hvmjwp223zenmauwldfv2noddih7bfuuavwyvaqad.onion">t6furoapbsow…fuuavwyvaqad.onion</code>{{ copy_btn("http://t6furoapbsowxp3hvmjwp223zenmauwldfv2noddih7bfuuavwyvaqad.onion", "onion address") }}</p>
+        {% endif %}
+        <p class="foot-by">Created by BT Labs for Epic Cash<span class="foot-sep" aria-hidden="true">·</span><a href="/donate">Donate</a></p>
       </div>
     </footer>
 
