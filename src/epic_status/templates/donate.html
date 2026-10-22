@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from '_copy.html' import copy_btn %}
+{% set page = 'donate' %}
+{% block title %}Donate — {{ site_name }}{% endblock %}
+
+{#
+  One page, three addresses. Full values are shown (they wrap, never truncate) because
+  someone checking an address before paying wants to read all of it. QR codes are static
+  SVGs in /static/qr, opened per address with <details>: no script, works over Tor.
+#}
+
+{% block content %}
+<div class="page-head">
+  <h1>Donate</h1>
+  <p>This status page is run by BT Labs. Donations help keep it and our Epic Cash infrastructure running — thank you.</p>
+</div>
+
+<section class="group">
+  <div class="group-head">
+    <h2>Addresses</h2>
+    <span class="group-count">pick whichever suits you</span>
+  </div>
+  <div class="donate-list">
+    {% for d in donate_addresses %}
+    <article class="donate">
+      <h3>{{ d.label }}</h3>
+      <p class="donate-note">{{ d.note }}</p>
+      <p class="donate-addr"><code>{{ d.value }}</code>{{ copy_btn(d.value, d.label ~ " address") }}</p>
+      <details class="donate-qr">
+        <summary>Show QR code</summary>
+        <img src="/static/qr/{{ d.qr }}.svg" width="168" height="168" alt="QR code for the {{ d.label }} address" />
+      </details>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

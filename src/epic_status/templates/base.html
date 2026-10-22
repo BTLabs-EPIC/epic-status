@@ -1,3 +1,4 @@
+{% from '_copy.html' import copy_btn %}
 {#
   The shell. Dark by default; the theme is read from localStorage by a tiny inline
   script in app.js before first paint so there is no flash of the wrong mode.
@@ -114,6 +115,7 @@
     <footer class="foot">
       <div class="shell">
         {% block footer_extra %}{% endblock %}
+        <p class="foot-tor" id="foot-tor"><span class="foot-tor-link">Also on Tor: <code title="http://t6furoapbsowxp3hvmjwp223zenmauwldfv2noddih7bfuuavwyvaqad.onion">t6furo…vaqad.onion</code>{{ copy_btn("http://t6furoapbsowxp3hvmjwp223zenmauwldfv2noddih7bfuuavwyvaqad.onion", "onion address") }}</span><span class="foot-tor-here" hidden>You are on the Tor version.</span><span class="foot-tor-sep" aria-hidden="true">·</span><a href="/donate">Donate</a></p>
         <div class="foot-row">
           <span>Created by btlabs for Epic Cash.</span>
           <nav class="foot-nav" aria-label="Elsewhere">

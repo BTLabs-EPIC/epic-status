@@ -1166,3 +1166,32 @@ def _bar_class(value: float | None) -> str:
     if value >= 0.9:
         return "warn"
     return "bad"
+
+
+DONATE_ADDRESSES = (
+    {
+        "label": "Epicbox",
+        "note": "Send over Epicbox.",
+        "value": "esWxboBPMgL4RqufRYcGUJ7t6YVWGvyuid6xRM62UkRzSb3jUcNK@epicbox.epiccash.com",
+        "qr": "epicbox",
+    },
+    {
+        "label": "HTTPS",
+        "note": "BT Labs on the web.",
+        "value": "https://wallet.btlabs.uk",
+        "qr": "https",
+    },
+    {
+        "label": "Tor",
+        "note": "The same, as an onion service.",
+        "value": "http://4ulfddx7retnirrzmvdp62xg5w4wunvj5nuivwnpzghrlaqobxiwvcqd.onion",
+        "qr": "tor",
+    },
+)
+
+
+def render_donate(*, settings: Settings) -> str:
+    """The donate page: static addresses and a thank-you, no snapshot needed."""
+    context = _base_context(None, settings)
+    context["donate_addresses"] = DONATE_ADDRESSES
+    return _environment().get_template("donate.html").render(**context)

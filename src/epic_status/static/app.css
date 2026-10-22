@@ -4960,3 +4960,68 @@ input[data-state='failed'] {
   height: 1px;
   opacity: 0;
 }
+
+
+/* ------------------------------------------------------------ tor note, donate page */
+.foot-tor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-8);
+  margin: 0 0 var(--sp-12);
+}
+.foot-tor code {
+  font-family: var(--font-mono);
+}
+.foot-tor a {
+  text-decoration: none;
+}
+.foot-tor a:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.foot-tor [hidden] {
+  display: none;
+}
+.donate-list {
+  display: grid;
+  gap: var(--sp-24);
+  max-width: 44rem;
+}
+.donate {
+  padding-top: var(--sp-16);
+  border-top: 1px solid var(--line);
+}
+.donate h3 {
+  margin: 0;
+}
+.donate-note {
+  margin: var(--sp-4) 0 var(--sp-8);
+  color: var(--ink-dim);
+}
+.donate-addr {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.donate-addr code {
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+.donate-qr {
+  margin-top: var(--sp-8);
+}
+.donate-qr summary {
+  cursor: pointer;
+  color: var(--ink-dim);
+  width: max-content;
+}
+.donate-qr summary:hover,
+.donate-qr summary:focus-visible {
+  color: var(--ink);
+}
+.donate-qr img {
+  display: block;
+  margin-top: var(--sp-8);
+  border-radius: 6px;
+  background: #fff;
+}

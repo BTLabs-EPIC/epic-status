@@ -48,6 +48,7 @@ from .quickcheck import QuickChecker, QuickCheckResult, run_check
 from .render import (
     probe_url,
     render_api,
+    render_donate,
     render_board,
     render_feed,
     render_history,
@@ -466,6 +467,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def api_reference() -> HTMLResponse:
         return HTMLResponse(
             render_api(settings=settings),
+            headers={"cache-control": "no-store", **security_headers()},
+        )
+
+    @app.api_route("/donate", methods=["GET", "HEAD"], include_in_schema=False)
+    async def donate() -> HTMLResponse:
+        return HTMLResponse(
+            render_donate(settings=settings),
             headers={"cache-control": "no-store", **security_headers()},
         )
 
