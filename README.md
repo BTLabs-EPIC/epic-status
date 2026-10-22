@@ -17,7 +17,7 @@ chain. Live at <https://status.btlabs.uk>.
 ### Setup
 
 ```sh
-git clone https://github.com/blacktyger/epic-status.git && cd epic-status
+git clone https://github.com/BTLabs-EPIC/epic-status.git && cd epic-status
 uv sync
 cp .env.example .env
 ```

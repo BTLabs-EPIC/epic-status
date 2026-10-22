@@ -90,7 +90,7 @@ class Settings(BaseSettings):
 
     site_name: str = "Epic Cash Status"
     site_url: str = "http://127.0.0.1:13431"
-    source_url: str = "https://github.com/blacktyger/epic-status"
+    source_url: str = "https://github.com/BTLabs-EPIC/epic-status"
     """Where the footer's Source and Run-your-own links point. A fork that changes
     the code should point it at its own repository."""
     prober_id: str = "local"
