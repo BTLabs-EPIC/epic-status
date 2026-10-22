@@ -155,7 +155,7 @@ class Settings(BaseSettings):
 
     notify_url: str = ""
     """Feedback-bot endpoint that DMs the operator about a new submission, e.g.
-    `http://100.125.95.78:8790/status/notify`. Empty (the default) disables it."""
+    `http://bot.example.internal:8790/status/notify`. Empty (the default) disables it."""
 
     notify_token: str = ""
     """Scoped bearer token for `notify_url`. Set it only through the systemd

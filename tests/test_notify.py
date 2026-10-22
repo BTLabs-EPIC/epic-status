@@ -18,7 +18,7 @@ from epic_status.models import Kind
 from epic_status.notify import Notifier
 from epic_status.submit import accept
 
-URL = "http://100.125.95.78:8790/status/notify"
+URL = "http://bot.example.internal:8790/status/notify"
 TOKEN = "t" * 43
 
 
