@@ -15,7 +15,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 import hashlib
-from collections.abc import Sequence
+import re
+from collections.abc import Mapping, Sequence
 from typing import Any, NamedTuple
 
 from functools import lru_cache, partial
@@ -132,6 +133,8 @@ def _environment() -> Environment:
         lstrip_blocks=True,
     )
     env.filters["thousands"] = _thousands
+    env.globals["server_initials"] = server_initials
+    env.globals["server_tint"] = server_tint
     env.filters["ms"] = _ms
     env.filters["pct"] = _pct
     env.filters["relative"] = _relative
@@ -736,6 +739,7 @@ def render_board(
     chains: Sequence[Chain] = (),
     qc: QuickCheckResult | None = None,
     qc_input: str = "",
+    icons: Mapping[tuple[str, str], Any] | None = None,
 ) -> str:
     """The board. `qc` is a quick-check result to render already open — the no-JavaScript
     path, where the check is a form post and the answer is the whole page again."""
@@ -747,7 +751,47 @@ def render_board(
     context["quickcheck_enabled"] = getattr(settings, "quickcheck_enabled", True)
     context["qc"] = qc
     context["qc_input"] = qc_input
+    # (kind, slug) → the approved server icon, drawn in each row's tile. Relative URLs, so
+    # the onion mirror serves its own copies and a Tor reader never leaves Tor.
+    context["server_icons"] = icons or {}
     return _environment().get_template("board.html").render(**context)
+
+
+_INITIALS_SKIP = frozenset({"node", "epicbox", "www"})
+
+
+def server_initials(operator: str | None, host: str) -> str:
+    """Two letters for a server's tile, by the wallet's rule (`serverInitials` in the app's
+    server list), so a server reads the same on this page and in the app.
+
+    From the operator when there is one: the first letters of its first two words, a
+    camel-cased name splitting into words, or the first two letters of a one-word name.
+    Otherwise from the host: the first two letters of its first label past `node.`,
+    `epicbox.` or `www.`.
+    """
+    name = (operator or "").strip()
+    if name:
+        spaced = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name)
+        words = [w for w in re.split(r"[\s\-_.]+", spaced) if w]
+        if len(words) >= 2:
+            return (words[0][0] + words[1][0]).upper()
+        if len(words) == 1:
+            return words[0][:2].upper()
+    labels = [p for p in host.split(":")[0].split(".") if p and p not in _INITIALS_SKIP]
+    return labels[0][:2].upper() if labels else "?"
+
+
+def server_tint(operator: str | None, host: str) -> int:
+    """Which of three muted tints an initials tile gets: 0 accent, 1 info, 2 ink.
+
+    The app's hash, kept bit for bit (31-multiplier over UTF-16 code units, masked to 31
+    bits), so an operator's tile is the same colour here as in the wallet.
+    """
+    seed = 17
+    data = (operator or host).lower().encode("utf-16-le")
+    for i in range(0, len(data), 2):
+        seed = (seed * 31 + int.from_bytes(data[i : i + 2], "little")) & 0x7FFFFFFF
+    return seed % 3
 
 
 def render_quickcheck_result(
@@ -1179,6 +1223,7 @@ def render_admin(
     pending_icons: Sequence[Any] = (),
     icons_by_submission: dict[int, Any] | None = None,
     active_icons: dict[tuple[str, str], Any] | None = None,
+    staged_icons: dict[tuple[str, str], Any] | None = None,
     icon_settings: Any = None,
 ) -> str:
     """The review queue.
@@ -1200,6 +1245,7 @@ def render_admin(
         pending_icons=pending_icons,
         icons_by_submission=icons_by_submission or {},
         active_icons=active_icons or {},
+        staged_icons=staged_icons or {},
         # The preview shows the 128 px rendition, the size a wallet tile draws at 2x.
         icon_preview_size=min(icon_settings.sizes) if icon_settings else 128,
         icon_max_kb=(icon_settings.max_bytes // 1024) if icon_settings else 1024,

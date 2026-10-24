@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from . import admin, server_icons
 from .models import Chain, Kind, Source, Target
@@ -41,6 +42,8 @@ def register(app: FastAPI, service: Service) -> None:
     if not settings.admin_password_hash:
         return
     sessions = admin.Sessions()
+    # Admin URL fetches make outbound requests, so even a signed-in session gets a ceiling.
+    fetch_limiter = server_icons.UploadLimiter(per_address=30, total=60)
 
     def _admin_cookie(response: Response, token: str) -> None:
         response.set_cookie(
@@ -83,6 +86,7 @@ def register(app: FastAPI, service: Service) -> None:
                 pending_icons=service.icons.pending(),
                 icons_by_submission=service.icons.pending_by_submission(),
                 active_icons=service.icons.active(),
+                staged_icons=service.icons.staged(),
                 icon_settings=service.icon_settings,
             ),
             headers={
@@ -573,6 +577,45 @@ def register(app: FastAPI, service: Service) -> None:
         except IconRejected as exc:
             return _dashboard(session, notice=f"Icon not saved: {exc}")
         return _dashboard(session, notice=f"Icon for {target.display_host} saved and published.")
+
+    @app.post("/admin/icon/fetch", response_class=HTMLResponse, include_in_schema=False)
+    async def admin_icon_fetch(
+        request: Request,
+        csrf: Annotated[str, Form()] = "",
+        target_id: Annotated[int, Form()] = 0,
+        url: Annotated[str, Form()] = "",
+    ) -> Response:
+        """Fetch an image from a URL into a preview. Nothing is published until the admin
+        chooses Use this icon; see `server_icons.fetch_image` for the guards."""
+        session = _session(request)
+        if session is None:
+            return _login_page("Session expired.", 401)
+        if not sessions.valid_csrf(session, csrf):
+            return _dashboard(session, notice="Request rejected: stale form. Retry.")
+        target = _icon_target(target_id)
+        if target is None:
+            return _dashboard(session, notice="No such target.")
+        refusal = fetch_limiter.allow(client_address(request))
+        if refusal is not None:
+            return _dashboard(session, notice="Too many fetches in the last hour. Upload the file instead.")
+        cfg = service.icon_settings
+        try:
+            data = await server_icons.fetch_image(
+                url,
+                cfg,
+                own_addresses=service.quickcheck.local.get,
+                allow_private=settings.allow_private_targets,
+            )
+            item = await run_in_threadpool(server_icons.normalise, data, cfg)
+        except IconRejected as exc:
+            log.info("admin icon fetch for %s refused: %s", target.slug, exc)
+            return _dashboard(session, notice=f"Icon not fetched: {exc}")
+        service.icons.stage(item, kind=target.kind.value, slug=target.slug)
+        log.info("admin fetched icon %s for %s", item.hash, target.slug)
+        return _dashboard(
+            session,
+            notice=f"Fetched. Check the preview under {target.display_host}, then Use this icon or Discard.",
+        )
 
     @app.post("/admin/icon/remove", response_class=HTMLResponse, include_in_schema=False)
     async def admin_icon_remove(

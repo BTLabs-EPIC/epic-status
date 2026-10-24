@@ -35,6 +35,21 @@
 </span>
 {%- endmacro %}
 
+{#
+  The server's tile: its approved icon, else two initials on a muted tint — the same tile
+  and the same initials rule as the wallet's server list, so a server is recognisable from
+  one to the other. Decorative (`alt=""`, `aria-hidden`): the host name beside it is the
+  label. The icon URL is relative, so on the onion mirror it is served over the onion.
+#}
+{% macro server_tile(t, size, rendition) %}
+{% set ref = server_icons.get((t.kind.value, t.slug)) %}
+{% if ref %}
+<span class="srv-tile srv-tile-{{ size }} has-icon" aria-hidden="true"><img src="/api/v1/icons/{{ ref.hash }}-{{ rendition }}.png" width="{{ size }}" height="{{ size }}" alt="" loading="lazy" decoding="async" /></span>
+{%- else %}
+<span class="srv-tile srv-tile-{{ size }} srv-tint-{{ server_tint(t.operator, t.display_host) }}" aria-hidden="true">{{ server_initials(t.operator, t.display_host) }}</span>
+{%- endif %}
+{% endmacro %}
+
 {% macro row(status, kind, tip) %}
 {% set t = status.target %}
 <li class="row state-{{ status.state.value }}" id="row-{{ t.slug }}" data-slug="{{ t.slug }}">
@@ -52,6 +67,7 @@
     already spent its saturated colours on faults.
   #}
   <span class="row-host">
+    {{ server_tile(t, 32, 128) }}
     <b>{{ t.display_host }}{% if t.verified %}<span class="verified-mark" role="img" title="Verified by the Epic Cash dev team" aria-label="Verified by the Epic Cash dev team">{{ icon_check }}</span>{% endif %}{% if kind == Kind.NODE %}{{ peers_hint(status) }}{% endif %}</b>
     <span>{{ t.operator or t.label or 'operator not stated' }}</span>
   </span>
@@ -322,6 +338,13 @@
 {% set url = probe_url(t) %}
 <div class="detail" id="d-{{ t.slug }}" hidden>
   <div class="detail-in">
+    <div class="d-ident">
+      {{ server_tile(t, 64, 256) }}
+      <span class="d-ident-text">
+        <b>{{ t.display_host }}</b>
+        <span>{{ t.operator or t.label or 'operator not stated' }}</span>
+      </span>
+    </div>
     {% if kind == Kind.NODE %}
     {{ node_facts(status) }}
     {% else %}

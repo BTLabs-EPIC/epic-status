@@ -64,21 +64,28 @@ are never stored or served. Icons sent with a public request (the form's optiona
 **Icon** field, or `-F icon=@logo.png` on `POST /api/v1/submit`) wait as *pending*
 until approved at `/admin`, under **Icons waiting**, separately from the request.
 
-At `/admin` each monitored target shows its icon on the wallet's light and dark tiles,
-with **Upload**/**Replace** and **Remove icon**. Behind the same login and CSRF token:
+At `/admin` each monitored target has an **Icon** area: the icon on the wallet's light and
+dark tiles, **Upload** (published at once), **From URL** (fetched into a preview, then
+**Use this icon** or **Discard**) and **Remove icon**. A URL fetch is https only, checks
+every hop's address (no private, loopback, link-local or this server's own addresses),
+follows at most 3 redirects by hand, streams with the same 1 MB cap, gives up after 10 s
+and sends no cookies or credentials. Behind the same login and CSRF token:
 
 | Route | Body (multipart) | Does |
 |---|---|---|
 | `POST /admin/api/icon` | `csrf`, `target_id`, `icon` | Set the icon; returns JSON with what status.json now publishes |
 | `POST /admin/icon` | the same | The same, for the plain form |
-| `POST /admin/icon/review` | `csrf`, `icon_id`, `decision=approve\|reject` | Decide a pending icon |
+| `POST /admin/icon/fetch` | `csrf`, `target_id`, `url` (form) | Fetch an image into a preview |
+| `POST /admin/icon/review` | `csrf`, `icon_id`, `decision=approve\|reject` | Decide a pending icon or a fetched preview |
 | `POST /admin/icon/remove` | `csrf`, `target_id` | Take the icon down |
 | `GET /admin/icons/<hash>-<size>.png` | | Preview any stored icon, pending included |
 
 From a shell on the host: `uv run epic-status icon-set node node.example.org logo.png`
 and `uv run epic-status icon-remove node node.example.org`.
 
-Approved icons appear in `/api/v1/status.json` as `icon` on each target — `url` (the
+The board shows each server's icon in a tile beside its host name, and a larger one in
+its detail panel; a server with none gets two initials, by the same rule as the wallet
+(from the operator's name, else from the host). Approved icons appear in `/api/v1/status.json` as `icon` on each target — `url` (the
 largest), `urls` by size, `hash` and `updated_at`, or `null` for none — and are served
 from `GET /api/v1/icons/<hash>-<size>.png` as `image/png` with `nosniff` and a one-year
 immutable cache. Set `EPIC_STATUS_ONION_URL` and requests arriving over the onion get

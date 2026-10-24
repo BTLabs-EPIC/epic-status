@@ -17,14 +17,14 @@
   (`surfaceHi` in the wallet's theme tokens). No icon shows what the wallet shows instead,
   the host's initials. `src` is the admin route, which serves pending icons too.
 #}
-{% macro icon_tiles(hash, host, size) %}
+{% macro icon_tiles(hash, initials, size) %}
 <span class="icon-tiles">
   {% for tone in ('light', 'dark') %}
   <span class="icon-tile icon-tile-{{ tone }}" title="{{ tone }} tile">
     {% if hash %}
     <img src="/admin/icons/{{ hash }}-{{ size }}.png" width="48" height="48" alt="" loading="lazy" />
     {% else %}
-    <span class="icon-initials">{{ host[:2] | upper }}</span>
+    <span class="icon-initials">{{ initials }}</span>
     {% endif %}
   </span>
   {% endfor %}
@@ -105,7 +105,7 @@
   <ul class="reqs">
     {% for i in pending_icons %}
     <li class="req" data-icon-id="{{ i['id'] }}">
-      {{ icon_tiles(i['hash'], i['slug'], icon_preview_size) }}
+      {{ icon_tiles(i['hash'], server_initials(none, i['slug']), icon_preview_size) }}
       <div class="req-main">
         <b>{{ i['slug'] }}</b>
         <span class="req-tags"><span class="badge">{{ i['kind'] }}</span></span>
@@ -161,7 +161,7 @@
         {% set sent_icon = icons_by_submission.get(r['id']) %}
         {% if sent_icon %}
         <span class="req-icon">
-          {{ icon_tiles(sent_icon['hash'], r['host'], icon_preview_size) }}
+          {{ icon_tiles(sent_icon['hash'], server_initials(r['operator'], r['host']), icon_preview_size) }}
           <span class="req-meta">icon attached · decided under Icons waiting</span>
         </span>
         {% endif %}
@@ -303,30 +303,76 @@
   </form>
 
   {#
-    The icon. Upload replaces the current one at once — an admin's upload is the decision —
-    after the same decoding and re-encoding a public upload gets. Remove takes it down and
-    the wallet falls back to initials.
+    The icon, in its own clearly labelled area. Two ways in: Upload a file, which is
+    published at once (an admin's upload is the decision), or From URL, which fetches into
+    a preview first — Use this icon publishes it, Discard drops it. Both go through the same
+    decoding and re-encoding as a public upload. Remove takes the icon down and the wallet
+    falls back to initials. Each form posts back to `#icon-<id>`, so the page reopens here.
   #}
   {% set current = active_icons.get((t.kind.value, t.slug)) %}
-  <div class="rec-icon">
-    {{ icon_tiles(current.hash if current else none, t.display_host, icon_preview_size) }}
-    <form class="rec-icon-form" method="post" action="/admin/icon" enctype="multipart/form-data">
-      <input type="hidden" name="csrf" value="{{ csrf }}" />
-      <input type="hidden" name="target_id" value="{{ t.id }}" />
-      <label class="field">
-        <span>Icon <small>PNG, JPEG or WebP, up to {{ icon_max_kb }} KB</small></span>
-        <input type="file" name="icon" accept="image/png,image/jpeg,image/webp" required />
-      </label>
-      <button class="btn" type="submit">{{ 'Replace' if current else 'Upload' }}</button>
-    </form>
-    {% if current %}
-    <form method="post" action="/admin/icon/remove">
-      <input type="hidden" name="csrf" value="{{ csrf }}" />
-      <input type="hidden" name="target_id" value="{{ t.id }}" />
-      <button class="btn btn-quiet" type="submit" title="Wallets show initials instead">Remove icon</button>
-    </form>
-    {% endif %}
-  </div>
+  {% set preview = staged_icons.get((t.kind.value, t.slug)) %}
+  {% set initials = server_initials(t.operator, t.display_host) %}
+  <section class="rec-icon" id="icon-{{ t.id }}" aria-labelledby="icon-h-{{ t.id }}">
+    <div class="rec-icon-head">
+      <h3 id="icon-h-{{ t.id }}">Icon</h3>
+      <span class="rec-icon-state">
+        {%- if current %}published · in status.json and on the board
+        {%- else %}none · wallets and the board show “{{ initials }}”{% endif -%}
+      </span>
+    </div>
+
+    <div class="rec-icon-body">
+      <div class="rec-icon-now">
+        {{ icon_tiles(current.hash if current else none, initials, icon_preview_size) }}
+        {% if current %}
+        <form method="post" action="/admin/icon/remove#icon-{{ t.id }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}" />
+          <input type="hidden" name="target_id" value="{{ t.id }}" />
+          <button class="btn btn-quiet" type="submit" title="Wallets show initials instead">Remove icon</button>
+        </form>
+        {% endif %}
+      </div>
+
+      {% if preview %}
+      <div class="rec-icon-preview">
+        {{ icon_tiles(preview['hash'], initials, icon_preview_size) }}
+        <span class="rec-icon-note">
+          Fetched preview, not published · {{ (preview['source_format'] or '?') | upper }}
+          {{ preview['source_width'] }}×{{ preview['source_height'] }}
+        </span>
+        <form class="req-act" method="post" action="/admin/icon/review#icon-{{ t.id }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}" />
+          <input type="hidden" name="icon_id" value="{{ preview['id'] }}" />
+          <button class="btn btn-primary" type="submit" name="decision" value="approve">Use this icon</button>
+          <button class="btn" type="submit" name="decision" value="reject">Discard</button>
+        </form>
+      </div>
+      {% endif %}
+
+      <div class="rec-icon-forms">
+        <form class="rec-icon-form" method="post" action="/admin/icon#icon-{{ t.id }}"
+              enctype="multipart/form-data">
+          <input type="hidden" name="csrf" value="{{ csrf }}" />
+          <input type="hidden" name="target_id" value="{{ t.id }}" />
+          <label class="field">
+            <span>Upload <small>PNG, JPEG or WebP, up to {{ icon_max_kb }} KB</small></span>
+            <input type="file" name="icon" accept="image/png,image/jpeg,image/webp" required />
+          </label>
+          <button class="btn" type="submit">{{ 'Replace' if current else 'Upload' }}</button>
+        </form>
+        <form class="rec-icon-form" method="post" action="/admin/icon/fetch#icon-{{ t.id }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}" />
+          <input type="hidden" name="target_id" value="{{ t.id }}" />
+          <label class="field">
+            <span>From URL <small>https only, previewed before it is used</small></span>
+            <input type="url" name="url" placeholder="https://example.org/logo.png"
+                   pattern="https://.+" maxlength="2048" autocomplete="off" spellcheck="false" required />
+          </label>
+          <button class="btn" type="submit">Fetch</button>
+        </form>
+      </div>
+    </div>
+  </section>
 
   {#
     Removal in two steps, in place. No dialog: a modal here would trap focus and move the

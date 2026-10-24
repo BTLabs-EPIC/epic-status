@@ -1539,7 +1539,9 @@ pre {
   .rows {
     grid-template-columns:
       auto                  /* traffic light */
-      minmax(9rem, 1fr)     /* host */
+      minmax(16.5rem, 0.25fr) /* host: the 32px server tile and its gap, then a name of
+                               ~25 monospace characters on one line, which is what the
+                               column held before it had a tile. */
       6.5rem                /* height · miners · TLS expires */
       7.25rem               /* vs tip · last block. Sized for the longest age the
                                `relative` filter can produce — "364d 23h ago", 12
@@ -1637,7 +1639,7 @@ pre {
     .row,
     .row-head {
       grid-template-columns:
-        auto minmax(9rem, 1fr) 6.5rem 7.25rem 4rem 4rem 5rem 9.5rem 4rem
+        auto minmax(16.5rem, 0.25fr) 6.5rem 7.25rem 4rem 4rem 5rem 9.5rem 4rem
         minmax(4rem, 1.4fr) 5.5rem;
       grid-template-areas:
         'dot host m1 m2 m3 m4 where lat up spark state'
@@ -5067,12 +5069,63 @@ input[data-state='failed'] {
   margin-top: var(--sp-8);
 }
 
+/* The icon area of a record: its own bordered block with a heading, so it is found at a
+   glance rather than read for. */
 .rec-icon {
+  margin-top: var(--sp-16);
+  padding: var(--sp-16);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--s2);
+}
+
+.rec-icon-head {
   display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sp-8) var(--sp-12);
+  margin-bottom: var(--sp-12);
+}
+
+.rec-icon-head h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--t-body);
+  font-weight: 600;
+}
+
+.rec-icon-state,
+.rec-icon-note {
+  color: var(--ink-dim);
+  font-size: var(--t-small);
+}
+
+.rec-icon-body {
+  display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
+  gap: var(--sp-16) var(--sp-24);
+}
+
+.rec-icon-now,
+.rec-icon-preview {
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: var(--sp-12);
-  margin-top: var(--sp-12);
+}
+
+.rec-icon-preview {
+  padding: var(--sp-8) var(--sp-12);
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+}
+
+.rec-icon-forms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-12) var(--sp-24);
+  flex: 1 1 28rem;
 }
 
 .rec-icon-form {
@@ -5080,8 +5133,112 @@ input[data-state='failed'] {
   align-items: flex-end;
   flex-wrap: wrap;
   gap: var(--sp-8);
+  flex: 1 1 16rem;
+}
+
+.rec-icon-form .field {
+  flex: 1 1 12rem;
+  min-width: 0;
 }
 
 .rec-icon-form input[type="file"] {
   max-width: 100%;
+}
+
+/* ---- Server tiles (board) -------------------------------------------------------------
+   The wallet's server tile: the surface colour, a hairline, a small radius, and either the
+   server's approved icon or its initials on a muted tint picked by name (render.server_tint,
+   the app's hash). It sits inside the host cell rather than in a column of its own, so the
+   subgrid's track list — shared by the header and three tables — is untouched. */
+.row-host {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--sp-12);
+  align-items: center;
+}
+
+.row-host > b,
+.row-host > span:not(.srv-tile) {
+  grid-column: 2;
+}
+
+/* Two classes, to outrank `.row-host > span` (block, micro type, dim ink) above and in the
+   phone layout, which were written for the text lines and would otherwise flatten the tile. */
+.row-host > .srv-tile {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  display: inline-grid;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.srv-tile {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  overflow: hidden;
+  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink-dim);
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1;
+  user-select: none;
+}
+
+.srv-tile img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.srv-tile-32 {
+  width: 32px;
+  height: 32px;
+  font-size: 11px;
+}
+
+.srv-tile-64 {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  font-size: 21px;
+}
+
+/* The app's three tints: accent at 14 %, info blue at 16 %, ink at 8 %, over the surface. */
+.srv-tint-0 {
+  background: color-mix(in srgb, var(--primary) 14%, var(--s1));
+}
+.srv-tint-1 {
+  background: color-mix(in srgb, var(--info-dot) 16%, var(--s1));
+}
+.srv-tint-2 {
+  background: color-mix(in srgb, var(--ink) 8%, var(--s1));
+}
+
+/* The detail panel opens with the server's larger tile, its host and operator. */
+.d-ident {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-16);
+}
+
+.d-ident-text {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.d-ident-text b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.d-ident-text span {
+  color: var(--ink-dim);
+  font-size: var(--t-small);
 }

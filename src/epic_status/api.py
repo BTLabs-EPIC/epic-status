@@ -346,6 +346,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         selected = _chain_or_404(chain)
         snap = service.snapshot_for(selected)
         html = render_board(
+            icons=service.icons.active(),
             snapshot=snap,
             settings=settings,
             chain=selected,
@@ -413,6 +414,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # rather than 404ing: the visitor asked about a node, not about a chain.
             snap = service.snapshot_for(board_chain)
             html = render_board(
+                icons=service.icons.active(),
                 snapshot=snap,
                 settings=settings,
                 chain=board_chain,
@@ -1083,6 +1085,7 @@ async def _do_submit(
             salt=service.submitter_salt,
             country=country or None,
             notifier=service.notifier,
+            with_icon=item is not None,
         )
     except SubmissionError as exc:
         return None, str(exc)

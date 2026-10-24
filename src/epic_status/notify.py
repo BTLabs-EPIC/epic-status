@@ -55,13 +55,18 @@ class Notifier:
     def enabled(self) -> bool:
         return bool(self.url and self.token)
 
-    def submitted(self, kind: str, host: str) -> None:
-        """Queue a DM for a new submission and return at once. Never raises."""
+    def submitted(self, kind: str, host: str, *, icon: bool = False) -> None:
+        """Queue a DM for a new submission and return at once. Never raises.
+
+        `icon`: the request carries a server icon, which the DM then mentions. Sent only when
+        true, so a bot that predates the field still accepts every request without one.
+        """
         if not self.enabled:
             return
         try:
             task = asyncio.get_running_loop().create_task(
-                self._deliver(kind, host, datetime.now(UTC)), name="notify-submission"
+                self._deliver(kind, host, datetime.now(UTC), icon=icon),
+                name="notify-submission",
             )
         except RuntimeError:
             log.warning("no running loop; submission notice for %s dropped", host)
@@ -69,13 +74,17 @@ class Notifier:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _deliver(self, kind: str, host: str, when: datetime) -> None:
-        body = {
+    async def _deliver(
+        self, kind: str, host: str, when: datetime, *, icon: bool = False
+    ) -> None:
+        body: dict[str, str | bool] = {
             "kind": kind,
             "host": host,
             "received": when.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "link": self.admin_url,
         }
+        if icon:
+            body["icon"] = True
         for attempt, delay in enumerate(self.retry_delays, start=1):
             if delay:
                 await asyncio.sleep(delay)
@@ -93,7 +102,7 @@ class Notifier:
         log.error("submission notice for %s dropped after %d attempts", host,
                   len(self.retry_delays))
 
-    async def _post(self, body: dict[str, str]) -> tuple[bool, str] | None:
+    async def _post(self, body: dict[str, str | bool]) -> tuple[bool, str] | None:
         """None on success, else (worth retrying, reason). The token is never logged."""
         if self._client is None:
             self._client = httpx.AsyncClient(timeout=httpx.Timeout(8.0))

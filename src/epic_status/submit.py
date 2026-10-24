@@ -171,6 +171,7 @@ async def accept(
     salt: str,
     country: str | None = None,
     notifier: Notifier | None = None,
+    with_icon: bool = False,
 ) -> str:
     """Validate and queue a submission. Returns the message to show.
 
@@ -234,7 +235,7 @@ async def accept(
         raise SubmissionError(f"{display} has already been submitted and is being checked.")
 
     if notifier is not None:
-        notifier.submitted(kind.value, display)
+        notifier.submitted(kind.value, display, icon=with_icon)
 
     if kind is Kind.POOL:
         # Do not promise probing. A pool is not auto-promoted, and a message saying

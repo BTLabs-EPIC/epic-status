@@ -566,3 +566,324 @@ def test_prune_deletes_old_rejected_files_only(tmp_path: Path) -> None:
         assert store.icon(icon_id) is None
     finally:
         db.close()
+
+
+# ------------------------------------------------------------------ the board
+
+
+@pytest.mark.parametrize(
+    ("operator", "host", "expected"),
+    [
+        ("BT Labs", "node.btlabs.uk", "BL"),
+        ("StackWallet", "epic.stackwallet.com:3413", "SW"),
+        ("epicnet", "node.epicnet.us", "EP"),
+        ("Epic-Cash dev", "x", "EC"),
+        (None, "node.epiccash.com", "EP"),
+        ("", "epicbox.fastepic.eu", "FA"),
+        ("  ", "www.node.x.org:443", "X"),
+        (None, "203.0.113.7", "20"),
+    ],
+)
+def test_initials_follow_the_wallet_rule(operator: str | None, host: str, expected: str) -> None:
+    from epic_status.render import server_initials
+
+    assert server_initials(operator, host) == expected
+
+
+def test_tint_is_the_wallet_hash() -> None:
+    from epic_status.render import server_tint
+
+    # Dart: 'bt labs'.codeUnits.fold(17, (a, c) => (a * 31 + c) & 0x7fffffff) % 3
+    seed = 17
+    for ch in "bt labs":
+        seed = (seed * 31 + ord(ch)) & 0x7FFFFFFF
+    assert server_tint("BT Labs", "ignored") == seed % 3
+    assert server_tint(None, "Node.Example.org") == server_tint(None, "node.example.org")
+
+
+async def test_board_rows_show_icon_or_initials(app: FastAPI, client: httpx.AsyncClient) -> None:
+    page = (await client.get("/")).text
+    # install_snapshot's node has operator "Example" and no icon yet.
+    assert 'class="srv-tile srv-tile-32 srv-tint-' in page
+    assert '>EX</span>' in page
+    from epic_status.server_icons import IconOrigin, IconStatus
+
+    service = app.state.service
+    item = normalise(image_bytes(), service.icon_settings)
+    service.icons.add(
+        item, kind="node", slug="node.example.org", origin=IconOrigin.ADMIN, status=IconStatus.ACTIVE
+    )
+    page = (await client.get("/")).text
+    assert f'src="/api/v1/icons/{item.hash}-128.png"' in page  # the row
+    assert f'src="/api/v1/icons/{item.hash}-256.png"' in page  # the detail panel
+    assert '>EX</span>' not in page
+
+
+async def test_notice_says_when_a_request_carries_an_icon(tmp_path: Path) -> None:
+    from epic_status.notify import Notifier
+
+    sent: list[dict[str, Any]] = []
+
+    class Capture(Notifier):
+        async def _post(self, body: dict[str, str | bool]) -> tuple[bool, str] | None:
+            sent.append(body)
+            return None
+
+    settings = make_settings(
+        tmp_path,
+        icons_file=icons_toml(tmp_path),
+        allow_private_targets=True,
+        notify_url="https://bot.example.org/status/notify",
+        notify_token="t" * 32,
+    )
+    app = create_app(settings)
+    service = app.state.service
+    service.notifier = Capture(settings)
+    async with client_for(app) as client:
+        await submit(client, "203.0.113.60", image_bytes())
+        await submit(client, "203.0.113.61", None)
+        import asyncio
+
+        for _ in range(50):
+            if len(sent) == 2:
+                break
+            await asyncio.sleep(0.01)
+    assert sent[0]["icon"] is True
+    assert "icon" not in sent[1]
+
+
+# ------------------------------------------------------------- fetch from a URL
+
+import asyncio  # noqa: E402
+import socket  # noqa: E402
+
+from epic_status.server_icons import fetch_image  # noqa: E402
+
+PUBLIC = "93.184.216.34"
+
+
+def resolver(table: dict[str, str]) -> Any:
+    async def gai(host: str, port: int) -> list[Any]:
+        if host not in table:
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+        addr = table[host]
+        family = socket.AF_INET6 if ":" in addr else socket.AF_INET
+        return [(family, socket.SOCK_STREAM, 6, "", (addr, port))]
+
+    return gai
+
+
+def transport(handler: Any) -> httpx.MockTransport:
+    return httpx.MockTransport(handler)
+
+
+async def fetch(url: str, handler: Any, table: dict[str, str] | None = None, **kw: Any) -> bytes:
+    cfg_kw = kw.pop("cfg", {})
+    return await fetch_image(
+        url,
+        IconSettings(**cfg_kw),
+        own_addresses=kw.pop("own", lambda: frozenset({"198.51.100.250"})),
+        getaddrinfo=resolver(table if table is not None else {"img.example.org": PUBLIC}),
+        transport=transport(handler),
+        **kw,
+    )
+
+
+def png_handler(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, content=image_bytes(), headers={"content-type": "image/png"})
+
+
+async def test_fetch_downloads_from_the_vetted_address_without_cookies_or_auth() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return png_handler(request)
+
+    data = await fetch("https://img.example.org/logo.png?v=2", handler)
+    assert data == image_bytes()
+    [req] = seen
+    assert req.url.host == PUBLIC  # pinned to the checked address
+    assert req.url.raw_path == b"/logo.png?v=2"
+    assert req.headers["host"] == "img.example.org"
+    assert req.extensions["sni_hostname"] == "img.example.org"
+    assert "cookie" not in req.headers and "authorization" not in req.headers
+
+
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("http://img.example.org/logo.png", "Only https"),
+        ("ftp://img.example.org/logo.png", "Only https"),
+        ("https://user:pw@img.example.org/logo.png", "user name or password"),
+        ("https:///logo.png", "no host"),
+        ("https://img.example.org/" + "a" * 3000, "too long"),
+    ],
+)
+async def test_fetch_refuses_bad_urls(url: str, message: str) -> None:
+    with pytest.raises(IconRejected, match=message):
+        await fetch(url, png_handler)
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["127.0.0.1", "10.0.0.5", "192.168.1.10", "172.16.0.1", "169.254.169.254", "100.64.0.1",
+     "0.0.0.0", "::1", "fe80::1", "fc00::1", "::ffff:127.0.0.1", "64:ff9b::7f00:1"],
+)
+async def test_fetch_refuses_private_loopback_and_link_local(address: str) -> None:
+    called: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        called.append(request)
+        return png_handler(request)
+
+    with pytest.raises(IconRejected, match="non-public address"):
+        await fetch("https://img.example.org/a.png", handler, {"img.example.org": address})
+    assert called == []  # refused before any connection
+
+
+async def test_fetch_refuses_this_servers_own_address() -> None:
+    with pytest.raises(IconRejected, match="points at this server"):
+        await fetch("https://img.example.org/a.png", png_handler, own=lambda: frozenset({PUBLIC}))
+
+
+async def test_fetch_refuses_when_own_addresses_are_unknown() -> None:
+    with pytest.raises(IconRejected, match="own addresses could not be read"):
+        await fetch("https://img.example.org/a.png", png_handler, own=lambda: None)
+
+
+async def test_fetch_rechecks_every_redirect() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers["host"] == "img.example.org":
+            return httpx.Response(302, headers={"location": "https://internal.example.org/x.png"})
+        raise AssertionError("must not connect to the redirect target")
+
+    table = {"img.example.org": PUBLIC, "internal.example.org": "10.1.2.3"}
+    with pytest.raises(IconRejected, match="non-public address 10.1.2.3"):
+        await fetch("https://img.example.org/a.png", handler, table)
+
+
+async def test_fetch_refuses_a_redirect_to_plain_http() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(301, headers={"location": "http://img.example.org/a.png"})
+
+    with pytest.raises(IconRejected, match="Only https"):
+        await fetch("https://img.example.org/a.png", handler)
+
+
+async def test_fetch_follows_at_most_three_redirects() -> None:
+    hops: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        hops.append(request.url.path)
+        n = len(hops)
+        if n <= 3:
+            return httpx.Response(302, headers={"location": f"/hop{n}.png"})
+        return png_handler(request)
+
+    assert await fetch("https://img.example.org/start.png", handler) == image_bytes()
+    assert hops == ["/start.png", "/hop1.png", "/hop2.png", "/hop3.png"]
+
+    hops.clear()
+
+    def endless(request: httpx.Request) -> httpx.Response:
+        hops.append(request.url.path)
+        return httpx.Response(302, headers={"location": f"/again{len(hops)}.png"})
+
+    with pytest.raises(IconRejected, match="more than 3 redirects"):
+        await fetch("https://img.example.org/start.png", endless)
+    assert len(hops) == 4
+
+
+async def test_fetch_caps_the_body_while_streaming() -> None:
+    async def chunks() -> Any:
+        for _ in range(64):
+            yield b"\0" * 32_768  # 2 MB, no Content-Length
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=chunks())
+
+    with pytest.raises(IconRejected, match="over 1024 KB"):
+        await fetch("https://img.example.org/a.png", handler)
+
+    def declared(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x", headers={"content-length": "5000000"})
+
+    with pytest.raises(IconRejected, match="over 1024 KB"):
+        await fetch("https://img.example.org/a.png", declared)
+
+
+async def test_fetch_times_out() -> None:
+    async def slow(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(5)
+        return png_handler(request)
+
+    with pytest.raises(IconRejected, match="within 0.2 seconds"):
+        await fetch("https://img.example.org/a.png", slow, cfg={"fetch_timeout_s": 0.2})
+
+
+async def test_fetch_reports_http_errors_and_dns_failures() -> None:
+    with pytest.raises(IconRejected, match="HTTP 404"):
+        await fetch("https://img.example.org/a.png", lambda r: httpx.Response(404))
+    with pytest.raises(IconRejected, match="does not resolve"):
+        await fetch("https://nowhere.example.org/a.png", png_handler)
+
+
+async def test_fetched_html_is_refused_like_an_upload(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"<html><script>alert(1)</script></html>",
+                              headers={"content-type": "image/png"})
+
+    data = await fetch("https://img.example.org/a.png", handler)
+    with pytest.raises(IconRejected, match="not a PNG, JPEG or WebP"):
+        normalise(data, cfg(tmp_path))
+
+
+async def test_admin_fetch_previews_before_publishing(
+    app: FastAPI, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import epic_status.server_icons as mod
+
+    calls: list[str] = []
+
+    async def fake_fetch(url: str, cfg: IconSettings, **kw: Any) -> bytes:
+        calls.append(url)
+        return image_bytes(colour=(250, 200, 0, 255))
+
+    monkeypatch.setattr(mod, "fetch_image", fake_fetch)
+    service = app.state.service
+    target = service.db.target_by_slug(Kind.NODE, "node.example.org")
+    assert target is not None
+    csrf = await login(client)
+    page = await client.post(
+        "/admin/icon/fetch",
+        data={"csrf": csrf, "target_id": str(target.id), "url": "https://img.example.org/a.png"},
+    )
+    assert "Check the preview" in page.text
+    assert calls == ["https://img.example.org/a.png"]
+    staged = service.icons.staged()[("node", "node.example.org")]
+    assert f"/admin/icons/{staged['hash']}-128.png" in page.text and "Use this icon" in page.text
+    # A preview is neither public nor in the public review queue.
+    assert node_row((await client.get("/api/v1/status.json")).json())["icon"] is None
+    assert service.icons.pending() == []
+
+    used = await client.post(
+        "/admin/icon/review", data={"csrf": csrf, "icon_id": str(staged["id"]), "decision": "approve"}
+    )
+    assert "approved and published" in used.text
+    assert node_row((await client.get("/api/v1/status.json")).json())["icon"]["hash"] == staged["hash"]
+
+
+async def test_admin_fetch_needs_a_session_and_token(app: FastAPI, client: httpx.AsyncClient) -> None:
+    target = app.state.service.db.target_by_slug(Kind.NODE, "node.example.org")
+    assert target is not None
+    async with client_for(app) as stranger:
+        r = await stranger.post(
+            "/admin/icon/fetch", data={"csrf": "x", "target_id": str(target.id), "url": "https://a.example/x.png"}
+        )
+        assert r.status_code == 401
+    await login(client)
+    r = await client.post(
+        "/admin/icon/fetch", data={"csrf": "forged", "target_id": str(target.id), "url": "https://a.example/x.png"}
+    )
+    assert "stale form" in r.text

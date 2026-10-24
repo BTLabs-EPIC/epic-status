@@ -31,8 +31,10 @@ table: the icons table is self-contained, and this module is the only writer.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
+import ipaddress
 import logging
 import os
 import re
@@ -42,11 +44,15 @@ import time
 import tomllib
 import warnings
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
+from urllib.parse import urljoin, urlsplit
+
+import httpx
 
 from fastapi import Request, UploadFile
 from fastapi.responses import Response
@@ -55,6 +61,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .config import REPO_ROOT
 from .db import Database
+from .net import Resolver, TargetRejected, pinned_url, resolve_endpoint
 from .web import cors
 
 log = logging.getLogger("epic_status.server_icons")
@@ -116,6 +123,8 @@ class IconSettings:
     per_address_per_hour: int = 3
     global_per_hour: int = 20
     max_pending: int = 50
+    fetch_timeout_s: float = 10.0
+    fetch_max_redirects: int = 3
 
     @property
     def largest(self) -> int:
@@ -145,6 +154,7 @@ def load_icon_settings(path: Path) -> IconSettings:
     output = doc.get("output", {})
     storage = doc.get("storage", {})
     limits = doc.get("limits", {})
+    fetch = doc.get("fetch", {})
 
     types = upload.get("allowed_types", ["png", "jpeg", "webp"])
     if not isinstance(types, list) or not types:
@@ -184,6 +194,8 @@ def load_icon_settings(path: Path) -> IconSettings:
         per_address_per_hour=_int(limits, "per_address_per_hour", 3, 0, 1000),
         global_per_hour=_int(limits, "global_per_hour", 20, 0, 100_000),
         max_pending=_int(limits, "max_pending", 50, 0, 10_000),
+        fetch_timeout_s=float(_int(fetch, "timeout_s", 10, 1, 60)),
+        fetch_max_redirects=_int(fetch, "max_redirects", 3, 0, 10),
     )
 
 
@@ -320,6 +332,135 @@ async def read_upload(upload: UploadFile, cfg: IconSettings) -> Normalised:
     return await run_in_threadpool(normalise, data, cfg)
 
 
+# --------------------------------------------------------------------- from a URL
+
+
+_REDIRECTS: Final = frozenset({301, 302, 303, 307, 308})
+_MAX_URL: Final = 2048
+
+
+async def fetch_image(
+    url: str,
+    cfg: IconSettings,
+    *,
+    own_addresses: Callable[[], frozenset[str] | None],
+    allow_private: bool = False,
+    getaddrinfo: Resolver | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> bytes:
+    """Download an image for an admin, or raise IconRejected. Admin-only: the public form
+    never fetches anything.
+
+    This makes the server open a connection to an address someone typed, so it carries the
+    same guard as the submit probes (`net`), plus what a download needs:
+
+    * **https only**, no credentials in the URL, and the request carries no cookies, no
+      auth and no proxy settings from the environment (`trust_env=False`).
+    * **Every hop is vetted.** The host is resolved here and refused if any address is
+      private, loopback, link-local, reserved or one of this server's own; the request then
+      goes to the vetted address, with the name only as Host and TLS SNI, so DNS cannot be
+      changed between the check and the connection. Redirects are not followed by the
+      client: each Location is checked as a new URL, at most `fetch_max_redirects` times.
+    * **Bounded.** One deadline (`fetch_timeout_s`) over the whole chain, and the body is
+      read as a stream and abandoned past `max_bytes`, whatever Content-Length claims.
+
+    What comes back is only bytes. The type is decided by `normalise`, from magic bytes,
+    exactly as for an upload.
+    """
+    try:
+        async with asyncio.timeout(cfg.fetch_timeout_s):
+            return await _fetch(url, cfg, own_addresses, allow_private, getaddrinfo, transport)
+    except TimeoutError:
+        raise IconRejected(
+            f"The image did not arrive within {cfg.fetch_timeout_s:g} seconds."
+        ) from None
+    except httpx.HTTPError as exc:
+        log.info("icon fetch failed: %s", type(exc).__name__)
+        raise IconRejected(f"Could not download the image ({type(exc).__name__}).") from None
+
+
+def _vet_url(url: str) -> None:
+    if len(url) > _MAX_URL:
+        raise IconRejected("That URL is too long.")
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        raise IconRejected("That is not a valid URL.") from None
+    if parts.scheme.lower() != "https":
+        raise IconRejected("Only https:// image URLs are fetched.")
+    if parts.username or parts.password:
+        raise IconRejected("URLs with a user name or password are not fetched.")
+    if not parts.hostname:
+        raise IconRejected("That URL has no host.")
+
+
+async def _fetch(
+    url: str,
+    cfg: IconSettings,
+    own_addresses: Callable[[], frozenset[str] | None],
+    allow_private: bool,
+    getaddrinfo: Resolver | None,
+    transport: httpx.AsyncBaseTransport | None,
+) -> bytes:
+    async with httpx.AsyncClient(
+        follow_redirects=False,
+        trust_env=False,
+        verify=True,
+        timeout=httpx.Timeout(cfg.fetch_timeout_s),
+        transport=transport,
+        headers={"user-agent": "epic-status/0.1 (+https://github.com/BTLabs-EPIC/epic-status)"},
+    ) as client:
+        current = url.strip()
+        for hop in range(cfg.fetch_max_redirects + 1):
+            _vet_url(current)
+            try:
+                resolved = await resolve_endpoint(
+                    current, allow_private=allow_private, getaddrinfo=getaddrinfo
+                )
+            except TargetRejected as exc:
+                raise IconRejected(f"Refused: {exc.message}.") from None
+            if not allow_private:
+                own = own_addresses()
+                if own is None:
+                    raise IconRejected("Refused: this server's own addresses could not be read.")
+                for addr in resolved.addresses:
+                    if str(ipaddress.ip_address(addr.split("%", 1)[0])) in own:
+                        raise IconRejected(
+                            f"Refused: {resolved.hostname} points at this server ({addr})."
+                        )
+            parts = urlsplit(current)
+            path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+            host = resolved.hostname if resolved.port == 443 else f"{resolved.hostname}:{resolved.port}"
+            async with client.stream(
+                "GET",
+                pinned_url(resolved, path),
+                headers={"host": host, "accept": "image/png, image/jpeg, image/webp"},
+                extensions={"sni_hostname": resolved.hostname},
+            ) as response:
+                if response.status_code in _REDIRECTS:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise IconRejected("The server redirected without saying where.")
+                    if hop == cfg.fetch_max_redirects:
+                        raise IconRejected(
+                            f"Refused: more than {cfg.fetch_max_redirects} redirects."
+                        )
+                    current = urljoin(current, location)
+                    continue
+                if response.status_code != 200:
+                    raise IconRejected(f"The server answered HTTP {response.status_code}.")
+                declared = response.headers.get("content-length", "")
+                if declared.isdigit() and int(declared) > cfg.max_bytes:
+                    raise IconRejected(f"The image is over {cfg.max_bytes // 1024} KB.")
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > cfg.max_bytes:
+                        raise IconRejected(f"The image is over {cfg.max_bytes // 1024} KB.")
+                return bytes(body)
+    raise IconRejected("Refused: too many redirects.")  # unreachable; the loop returns or raises
+
+
 # --------------------------------------------------------------------- rate limit
 
 
@@ -454,13 +595,14 @@ class IconStore:
     def pending(self) -> list[sqlite3.Row]:
         return list(
             self.db.conn.execute(
-                "SELECT * FROM icons WHERE status = 'pending' ORDER BY created_at DESC, id DESC"
+                "SELECT * FROM icons WHERE status = 'pending' AND origin = 'submitted'"
+                " ORDER BY created_at DESC, id DESC"
             ).fetchall()
         )
 
     def pending_count(self) -> int:
         row = self.db.conn.execute(
-            "SELECT COUNT(*) AS n FROM icons WHERE status = 'pending'"
+            "SELECT COUNT(*) AS n FROM icons WHERE status = 'pending' AND origin = 'submitted'"
         ).fetchone()
         return int(row["n"])
 
@@ -567,8 +709,36 @@ class IconStore:
                 "UPDATE icons SET status = 'active', decided_at = ? WHERE id = ?",
                 (now, icon_id),
             )
+            # Any other preview fetched for this target is moot once one is chosen.
+            conn.execute(
+                "UPDATE icons SET status = 'rejected', decided_at = ?"
+                " WHERE kind = ? AND slug = ? AND status = 'pending' AND origin = 'admin'",
+                (now, row["kind"], row["slug"]),
+            )
         self._active = None
         return self.icon(icon_id)
+
+    def stage(self, item: Normalised, *, kind: str, slug: str) -> int:
+        """Keep an admin's fetched image as a preview: pending, origin admin, not public.
+        Replaces any earlier preview for the same target."""
+        self.db.conn.execute(
+            "UPDATE icons SET status = 'rejected', decided_at = ?"
+            " WHERE kind = ? AND slug = ? AND status = 'pending' AND origin = 'admin'",
+            (_now_iso(), kind, slug),
+        )
+        return self.add(
+            item, kind=kind, slug=slug, origin=IconOrigin.ADMIN, status=IconStatus.PENDING
+        )
+
+    def staged(self) -> dict[tuple[str, str], sqlite3.Row]:
+        """(kind, slug) → an admin's fetched preview awaiting Use or Discard."""
+        return {
+            (str(r["kind"]), str(r["slug"])): r
+            for r in self.db.conn.execute(
+                "SELECT * FROM icons WHERE status = 'pending' AND origin = 'admin'"
+                " ORDER BY id"
+            ).fetchall()
+        }
 
     def reject(self, icon_id: int) -> sqlite3.Row | None:
         row = self.icon(icon_id)

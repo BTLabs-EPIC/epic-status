@@ -55,3 +55,12 @@ global_per_hour = 20
 # Icons waiting for a decision. At the cap the form refuses new images (a submission
 # without one still goes through) until some are approved or rejected.
 max_pending = 50
+
+[fetch]
+# Admin only: "From URL" on a server's icon at /admin. The public form never fetches.
+# https only; every hop's address is checked (no private, loopback, link-local or this
+# server's own addresses) and redirects are followed by hand, at most this many. The
+# download is capped at upload.max_bytes while streaming, and the whole chain must
+# finish within timeout_s. No cookies or credentials are ever sent.
+timeout_s = 10
+max_redirects = 3
