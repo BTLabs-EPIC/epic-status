@@ -18,11 +18,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
 
-from . import admin
+from . import admin, server_icons
 from .models import Chain, Kind, Source, Target
+from .server_icons import IconOrigin, IconRejected, IconStatus
 from .render import render_admin, render_admin_login
 from .web import client_address, json_response, security_headers
 
@@ -79,6 +80,10 @@ def register(app: FastAPI, service: Service) -> None:
                 csrf=session.csrf,
                 user=session.user,
                 notice=notice,
+                pending_icons=service.icons.pending(),
+                icons_by_submission=service.icons.pending_by_submission(),
+                active_icons=service.icons.active(),
+                icon_settings=service.icon_settings,
             ),
             headers={
                 "cache-control": "no-store",
@@ -212,6 +217,7 @@ def register(app: FastAPI, service: Service) -> None:
         host = str(row["host"])
         if not service.db.delete_submission(submission_id):
             return json_response({"ok": False, "error": "nothing removed"}, status_code=409)
+        service.icons.reject_for_submission(submission_id)
         log.info("admin deleted request %s", host)
         return json_response({"ok": True, "host": host})
 
@@ -290,6 +296,7 @@ def register(app: FastAPI, service: Service) -> None:
             service.db.review_submission(
                 submission_id, status="rejected", note="rejected"
             )
+            service.icons.reject_for_submission(submission_id)
             log.info("admin rejected %s", host)
             return json_response({"ok": True, "host": host, "status": "rejected"})
         return json_response({"ok": False, "error": "unknown decision"}, status_code=400)
@@ -350,6 +357,7 @@ def register(app: FastAPI, service: Service) -> None:
             return _dashboard(session, notice="That request no longer exists.")
         host = str(row["host"])
         service.db.delete_submission(submission_id)
+        service.icons.reject_for_submission(submission_id)
         log.info("admin deleted request %s", host)
         return _dashboard(session, notice=f"Request for {host} deleted.")
 
@@ -415,6 +423,7 @@ def register(app: FastAPI, service: Service) -> None:
             service.db.review_submission(
                 submission_id, status="rejected", note="rejected"
             )
+            service.icons.reject_for_submission(submission_id)
             log.info("admin rejected %s", host)
             return _dashboard(session, notice=f"{host} rejected.")
 
@@ -482,3 +491,134 @@ def register(app: FastAPI, service: Service) -> None:
         # every sweep, so an edit is live on the next one — within 30 seconds for a node.
         log.info("admin edited target %s", target.slug)
         return _dashboard(session, notice=f"{target.display_host} updated.")
+
+    # ---- server icons ----
+    #
+    # Same guards as everything above: a session, a CSRF token on every write. Uploads made
+    # here skip the public rate limit and the pending queue — an admin's upload is the
+    # decision — but not the decoding: an admin's file is re-encoded exactly like a
+    # stranger's, because a compromised session should not be a way to serve raw bytes.
+
+    def _icon_target(target_id: int) -> Target | None:
+        return service.db.target(target_id) if target_id else None
+
+    async def _store_admin_icon(target: Target, icon: UploadFile | None) -> int:
+        if icon is None or not (icon.filename or (icon.size or 0) > 0):
+            raise IconRejected("Choose an image file.")
+        item = await server_icons.read_upload(icon, service.icon_settings)
+        icon_id = service.icons.add(
+            item,
+            kind=target.kind.value,
+            slug=target.slug,
+            origin=IconOrigin.ADMIN,
+            status=IconStatus.ACTIVE,
+        )
+        log.info("admin set icon %s for %s", item.hash, target.slug)
+        return icon_id
+
+    def _public_icon(target: Target) -> dict[str, object] | None:
+        return server_icons.public_icon(
+            service.icons.active().get((target.kind.value, target.slug)),
+            settings.site_url,
+            service.icon_settings.sizes,
+        )
+
+    @app.api_route("/admin/icons/{name}", methods=["GET", "HEAD"], include_in_schema=False)
+    async def admin_icon_file(request: Request, name: str) -> Response:
+        """Any icon still on record, pending included, for the dashboard's previews."""
+        if _session(request) is None:
+            return Response(status_code=404, headers={"cache-control": "no-store"})
+        path = service.icons.path_for(name, public=False)
+        return server_icons.icon_response(request, name, path, cache="private, no-store")
+
+    @app.post("/admin/api/icon", include_in_schema=False)
+    async def admin_api_icon(
+        request: Request,
+        csrf: Annotated[str, Form()] = "",
+        target_id: Annotated[int, Form()] = 0,
+        icon: Annotated[UploadFile | None, File()] = None,
+    ) -> Response:
+        """Set a target's icon and return what status.json will now publish for it."""
+        _, refusal = _json_session(request, csrf)
+        if refusal is not None:
+            return refusal
+        target = _icon_target(target_id)
+        if target is None:
+            return json_response({"ok": False, "error": "no such target"}, status_code=404)
+        try:
+            icon_id = await _store_admin_icon(target, icon)
+        except IconRejected as exc:
+            return json_response({"ok": False, "error": str(exc)}, status_code=400)
+        return json_response(
+            {"ok": True, "id": icon_id, "host": target.display_host, "icon": _public_icon(target)}
+        )
+
+    @app.post("/admin/icon", response_class=HTMLResponse, include_in_schema=False)
+    async def admin_icon_upload(
+        request: Request,
+        csrf: Annotated[str, Form()] = "",
+        target_id: Annotated[int, Form()] = 0,
+        icon: Annotated[UploadFile | None, File()] = None,
+    ) -> Response:
+        session = _session(request)
+        if session is None:
+            return _login_page("Session expired.", 401)
+        if not sessions.valid_csrf(session, csrf):
+            return _dashboard(session, notice="Request rejected: stale form. Retry.")
+        target = _icon_target(target_id)
+        if target is None:
+            return _dashboard(session, notice="No such target.")
+        try:
+            await _store_admin_icon(target, icon)
+        except IconRejected as exc:
+            return _dashboard(session, notice=f"Icon not saved: {exc}")
+        return _dashboard(session, notice=f"Icon for {target.display_host} saved and published.")
+
+    @app.post("/admin/icon/remove", response_class=HTMLResponse, include_in_schema=False)
+    async def admin_icon_remove(
+        request: Request,
+        csrf: Annotated[str, Form()] = "",
+        target_id: Annotated[int, Form()] = 0,
+    ) -> Response:
+        session = _session(request)
+        if session is None:
+            return _login_page("Session expired.", 401)
+        if not sessions.valid_csrf(session, csrf):
+            return _dashboard(session, notice="Request rejected: stale form. Retry.")
+        target = _icon_target(target_id)
+        if target is None:
+            return _dashboard(session, notice="No such target.")
+        if not service.icons.remove(target.kind.value, target.slug):
+            return _dashboard(session, notice=f"{target.display_host} has no icon.")
+        log.info("admin removed the icon of %s", target.slug)
+        return _dashboard(
+            session, notice=f"Icon for {target.display_host} removed; wallets show initials."
+        )
+
+    @app.post("/admin/icon/review", response_class=HTMLResponse, include_in_schema=False)
+    async def admin_icon_review(
+        request: Request,
+        csrf: Annotated[str, Form()] = "",
+        icon_id: Annotated[int, Form()] = 0,
+        decision: Annotated[str, Form()] = "",
+    ) -> Response:
+        """Approve or reject a submitted icon. Independent of the request it came with:
+        a good server can arrive with a bad picture."""
+        session = _session(request)
+        if session is None:
+            return _login_page("Session expired.", 401)
+        if not sessions.valid_csrf(session, csrf):
+            return _dashboard(session, notice="Request rejected: stale form. Retry.")
+        if decision == "approve":
+            row = service.icons.approve(icon_id)
+            if row is None:
+                return _dashboard(session, notice="That icon is no longer waiting.")
+            log.info("admin approved icon %s for %s", row["hash"], row["slug"])
+            return _dashboard(session, notice=f"Icon for {row['slug']} approved and published.")
+        if decision == "reject":
+            row = service.icons.reject(icon_id)
+            if row is None:
+                return _dashboard(session, notice="That icon is no longer waiting.")
+            log.info("admin rejected icon %s for %s", row["hash"], row["slug"])
+            return _dashboard(session, notice=f"Icon for {row['slug']} rejected.")
+        return _dashboard(session, notice="Unknown decision.")

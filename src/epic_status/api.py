@@ -32,11 +32,11 @@ from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import admin_routes, schemas
+from . import admin_routes, schemas, server_icons
 from .badges import badge_for
 from .config import Settings, load_seed_targets
 from .config import settings as get_settings
@@ -56,7 +56,9 @@ from .render import (
     render_submit,
 )
 from .notify import Notifier
+from .server_icons import IconOrigin, IconRejected, IconStatus, IconStore, UploadLimiter
 from .submit import SubmissionError, Validator, accept
+from .submit import normalise as normalise_host
 from .upstream import ReleaseWatcher
 from .vantage import Ingest, Rejected, parse_keys
 from .web import client_address, cors, json_response, onion_request, security_headers, stamp
@@ -73,6 +75,13 @@ _FEED_EVENTS = 50
 #: Occurrences listed per event in events.json, newest first. An aggregate can hold
 #: hundreds; the count is exact regardless, and fifty is more than a day of anything.
 _OCCURRENCE_TIMES = 50
+
+_ICON_PRUNE_INTERVAL_S = 3600.0
+"""How often rejected and replaced icons past their retention are deleted."""
+
+#: Routes that take an image upload, and so a body larger than a form of text. Each is
+#: checked against `IconSettings.max_body` before the multipart parser reads anything.
+_UPLOAD_PATHS = frozenset({"/add", "/api/v1/submit", "/admin/icon", "/admin/api/icon"})
 
 _VALIDATOR_INTERVAL_S = 15.0
 """How often pending submissions are checked. Slow on purpose: a pending submission
@@ -128,6 +137,14 @@ answered with valid stats.
 
 Every pool's API is a different shape, so pools are integrated by hand. Submitting one
 records a request rather than starting an automatic check.
+
+### Server icons
+
+A server may have an `icon`: an object with `url` (the largest PNG), `urls` (every size,
+keyed by pixel width), `hash` and `updated_at`, or `null` when it has none — show the
+host's initials then. Files are square PNGs named by their content hash, served from
+`/api/v1/icons/` with a one-year immutable cache: a changed icon has a new URL. Over the
+onion service the URLs are on the onion address.
 """
 
 
@@ -154,6 +171,20 @@ class Service:
         # value whose only job is rate limiting.
         self.submitter_salt = secrets.token_hex(16)
         self.quickcheck = QuickChecker(settings)
+        # Read at boot like the target registry: a malformed icons.toml stops the service
+        # rather than publishing with limits nobody chose.
+        self.icon_settings = server_icons.load_icon_settings(settings.icons_file)
+        self.icons = IconStore(self.db, self.icon_settings)
+        self.icon_limiter = UploadLimiter(
+            per_address=self.icon_settings.per_address_per_hour,
+            total=self.icon_settings.global_per_hour,
+        )
+
+    def icon_base_url(self) -> str:
+        """Where icon URLs point for this request: the onion when it came over the onion."""
+        if onion_request.get() and self.settings.onion_url:
+            return self.settings.onion_url
+        return self.settings.site_url
 
     async def quick_check(
         self, raw: str, *, client_ip: str, use_defaults: bool = False
@@ -226,7 +257,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 _run_validator(service), name="validator"
             )
             release_task = asyncio.create_task(service.releases.run(), name="releases")
-            tasks = (poll_task, validate_task, release_task)
+            prune_task = asyncio.create_task(_run_icon_prune(service), name="icon-prune")
+            tasks = (poll_task, validate_task, release_task, prune_task)
             try:
                 yield
             finally:
@@ -275,6 +307,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await call_next(request)
         finally:
             onion_request.reset(token)
+
+    @app.middleware("http")
+    async def bound_upload_bodies(request: Request, call_next: Any) -> Any:
+        """Refuse an oversized upload before the multipart parser spools it.
+
+        nginx enforces `client_max_body_size` on these routes first; this is the same bound
+        for a deployment behind any other proxy. A body without a Content-Length (chunked)
+        is refused on these routes, since its size cannot be checked before it is read.
+        """
+        if request.method == "POST" and request.url.path in _UPLOAD_PATHS:
+            limit = service.icon_settings.max_body
+            raw = request.headers.get("content-length")
+            if raw is None or not raw.isdigit():
+                return json_response({"ok": False, "error": "Content-Length required"}, 411)
+            if int(raw) > limit:
+                return json_response(
+                    {"ok": False, "error": f"request body over {limit // 1024} KB"}, 413
+                )
+        return await call_next(request)
 
     # ------------------------------------------------------------------ pages
 
@@ -442,7 +493,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     async def add_form() -> HTMLResponse:
         return HTMLResponse(
-            render_submit(snapshot=service.snapshot, settings=settings),
+            render_submit(
+                snapshot=service.snapshot,
+                settings=settings,
+                icon_max_kb=service.icon_settings.max_bytes // 1024,
+            ),
             headers={"cache-control": "no-store", **security_headers()},
         )
 
@@ -453,9 +508,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         host: Annotated[str, Form()] = "",
         operator: Annotated[str, Form()] = "",
         country: Annotated[str, Form()] = "",
+        icon: Annotated[UploadFile | None, File()] = None,
     ) -> HTMLResponse:
         message, error = await _do_submit(
-            service, request, kind, host, operator, country
+            service, request, kind, host, operator, country, icon
         )
         return HTMLResponse(
             render_submit(
@@ -464,6 +520,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 message=message,
                 error=error,
                 submitted_host=host,
+                icon_max_kb=service.icon_settings.max_bytes // 1024,
             ),
             status_code=200 if message else 400,
             headers={"cache-control": "no-store", **security_headers()},
@@ -524,7 +581,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 {"error": "no data yet", "generated_at": None},
                 status_code=503,
             )
-        payload = _serialise(snap, settings)
+        payload = _serialise(
+            snap,
+            settings,
+            icons=service.icons.active(),
+            icon_base=service.icon_base_url(),
+            icon_sizes=service.icon_settings.sizes,
+        )
         body = json.dumps(payload, separators=(",", ":"), sort_keys=True)
         # The chain is inside the payload, so the two chains cannot collide on one
         # ETag: the hash is over a document that names the network it describes.
@@ -813,6 +876,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status_code=200 if ok else 503,
         )
 
+    @app.api_route(
+        server_icons.PUBLIC_PREFIX + "{name}",
+        methods=["GET", "HEAD"],
+        tags=["status"],
+        summary="A server icon",
+        description=(
+            "A square PNG, `<hash>-<size>.png`, as linked from a target's `icon` in "
+            "status.json. Only approved icons are served; anything else is a 404. The name "
+            "is the content hash, so the response is cacheable forever."
+        ),
+        responses={200: {"content": {"image/png": {}}}, 404: {"description": "No such icon."}},
+    )
+    async def server_icon(request: Request, name: str) -> Response:
+        path = service.icons.path_for(name, public=True)
+        return server_icons.icon_response(request, name, path)
+
     @app.post(
         "/api/v1/submit",
         tags=["submit"],
@@ -821,6 +900,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "Accepts a form body. The target is validated and queued; it is probed "
             "out of band and appears on the board once it answers three times, 60 "
             "seconds apart.\n\n"
+            "Send `multipart/form-data` to include an optional `icon` file: PNG, JPEG or "
+            "WebP, up to 1 MB and 2048×2048, still images only (SVG is refused). It is "
+            "re-encoded to square PNGs and published only after an operator approves it.\n\n"
             "Hosts resolving to private, loopback, link-local or reserved addresses "
             "are refused before anything is stored or contacted. Epicbox hostnames "
             "may contain only letters, digits and dots — a hyphen means the relay "
@@ -837,9 +919,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         host: Annotated[str, Form()] = "",
         operator: Annotated[str, Form()] = "",
         country: Annotated[str, Form()] = "",
+        icon: Annotated[UploadFile | None, File()] = None,
     ) -> Response:
         message, error = await _do_submit(
-            service, request, kind, host, operator, country
+            service, request, kind, host, operator, country, icon
         )
         if error:
             return json_response({"ok": False, "error": error}, status_code=400)
@@ -975,11 +1058,20 @@ async def _do_submit(
     host: str,
     operator: str,
     country: str = "",
+    icon: UploadFile | None = None,
 ) -> tuple[str | None, str | None]:
     try:
         parsed_kind = Kind(kind.strip().lower())
     except ValueError:
         return None, "Choose a node, an Epicbox relay or a mining pool."
+    # The icon is checked first, so a refused image refuses the whole request: the
+    # submitter resubmits with a better file instead of having to ask for an icon later.
+    item: server_icons.Normalised | None = None
+    if _has_upload(icon):
+        assert icon is not None
+        item, refusal = await _read_public_icon(service, request, icon)
+        if refusal is not None:
+            return None, refusal
     try:
         message = await accept(
             service.db,
@@ -994,7 +1086,58 @@ async def _do_submit(
         )
     except SubmissionError as exc:
         return None, str(exc)
+    if item is not None:
+        display, _ = normalise_host(parsed_kind, host)
+        row = service.db.conn.execute(
+            "SELECT id FROM submissions WHERE kind = ? AND host = ?",
+            (parsed_kind.value, display),
+        ).fetchone()
+        service.icons.add(
+            item,
+            kind=parsed_kind.value,
+            slug=display,
+            origin=IconOrigin.SUBMITTED,
+            status=IconStatus.PENDING,
+            submission_id=int(row["id"]) if row else None,
+        )
+        log.info("icon %s submitted for %s, pending review", item.hash, display)
+        message = f"{message} The icon is reviewed separately before it is shown."
     return message, None
+
+
+def _has_upload(upload: UploadFile | None) -> bool:
+    """A file input left empty still sends a part, with no filename and no bytes."""
+    return upload is not None and bool(upload.filename or (upload.size or 0) > 0)
+
+
+async def _read_public_icon(
+    service: Service, request: Request, upload: UploadFile
+) -> tuple[server_icons.Normalised | None, str | None]:
+    cfg = service.icon_settings
+    if service.icons.pending_count() >= cfg.max_pending:
+        return None, (
+            "Too many icons are waiting for review. Send the request without an image, "
+            "or try again later."
+        )
+    refusal = service.icon_limiter.allow(client_address(request))
+    if refusal is not None:
+        log.info("icon upload refused by the rate limit")
+        return None, refusal
+    try:
+        return await server_icons.read_upload(upload, cfg), None
+    except IconRejected as exc:
+        return None, str(exc)
+
+
+async def _run_icon_prune(service: Service) -> None:
+    while True:
+        try:
+            service.icons.prune()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("icon prune failed")
+        await asyncio.sleep(_ICON_PRUNE_INTERVAL_S)
 
 
 
@@ -1101,8 +1244,23 @@ def _probe_origins(snapshot: Snapshot | None) -> list[str]:
 
 
 
-def _serialise(snap: Snapshot, settings: Settings) -> dict[str, Any]:
+def _serialise(
+    snap: Snapshot,
+    settings: Settings,
+    *,
+    icons: dict[tuple[str, str], server_icons.IconRef] | None = None,
+    icon_base: str = "",
+    icon_sizes: tuple[int, ...] = (128, 256),
+) -> dict[str, Any]:
     net = snap.network
+    found = icons or {}
+
+    def row(status: TargetStatus) -> dict[str, Any]:
+        out = _serialise_target(status)
+        ref = found.get((status.target.kind.value, status.target.slug))
+        out["icon"] = server_icons.public_icon(ref, icon_base or settings.site_url, icon_sizes)
+        return out
+
     return {
         # The payload says what it is. Anything that reaches this route without having
         # read the reference page — a script, a search result, someone else's dashboard —
@@ -1118,6 +1276,7 @@ def _serialise(snap: Snapshot, settings: Settings) -> dict[str, Any]:
                 "tip_lag": "blocks behind the highest tip seen; the field to alert on",
                 "last_block_height": "pools only: the last block that pool FOUND, not a chain tip",
                 "uptime": "fractions, or null where there is no history — never 0",
+                "icon": "square PNG URLs by size, or null: show the host's initials",
             },
             "absent": [
                 "peer_count and sync status need a node's owner API secret",
@@ -1174,9 +1333,9 @@ def _serialise(snap: Snapshot, settings: Settings) -> dict[str, Any]:
                 net.activity.model_dump(mode="json") if net.activity is not None else None
             ),
         },
-        "nodes": [_serialise_target(s) for s in snap.nodes],
-        "epicbox": [_serialise_target(s) for s in snap.epicbox],
-        "pools": [_serialise_target(s) for s in snap.pools],
+        "nodes": [row(s) for s in snap.nodes],
+        "epicbox": [row(s) for s in snap.epicbox],
+        "pools": [row(s) for s in snap.pools],
     }
 
 

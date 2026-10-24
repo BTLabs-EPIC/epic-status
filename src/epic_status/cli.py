@@ -260,6 +260,59 @@ def prune(
     typer.echo(f"removed {removed} successful checks")
 
 
+@app.command("icon-set")
+def icon_set(
+    kind: Annotated[str, typer.Argument(help="node, epicbox or pool.")],
+    slug: Annotated[str, typer.Argument(help="The target's id, as in status.json.")],
+    image: Annotated[Path, typer.Argument(help="A PNG, JPEG or WebP file.")],
+) -> None:
+    """Set a server's icon from a file, as an admin upload: decoded, re-encoded, published.
+
+    The running service picks it up within 30 seconds; no restart needed.
+    """
+    from .server_icons import IconOrigin, IconRejected, IconStatus, IconStore
+    from .server_icons import load_icon_settings, normalise as normalise_icon
+
+    settings = get_settings()
+    cfg = load_icon_settings(settings.icons_file)
+    try:
+        parsed = Kind(kind)
+    except ValueError:
+        raise typer.BadParameter(f"kind must be one of {[k.value for k in Kind]}") from None
+    db = Database(settings.db, settings.prober_id)
+    try:
+        if db.target_by_slug(parsed, slug) is None:
+            typer.echo(f"note: no {parsed.value} {slug!r} is listed yet; the icon waits for it")
+        try:
+            item = normalise_icon(image.read_bytes(), cfg)
+        except IconRejected as exc:
+            typer.echo(f"refused: {exc}", err=True)
+            raise typer.Exit(1) from None
+        store = IconStore(db, cfg)
+        store.add(item, kind=parsed.value, slug=slug, origin=IconOrigin.ADMIN, status=IconStatus.ACTIVE)
+        base = settings.site_url.rstrip("/")
+        typer.echo(f"{slug}: {base}/api/v1/icons/{item.hash}-{cfg.largest}.png")
+    finally:
+        db.close()
+
+
+@app.command("icon-remove")
+def icon_remove(
+    kind: Annotated[str, typer.Argument(help="node, epicbox or pool.")],
+    slug: Annotated[str, typer.Argument(help="The target's id, as in status.json.")],
+) -> None:
+    """Take a server's icon down. Wallets show its initials instead."""
+    from .server_icons import IconStore, load_icon_settings
+
+    settings = get_settings()
+    db = Database(settings.db, settings.prober_id)
+    try:
+        removed = IconStore(db, load_icon_settings(settings.icons_file)).remove(kind, slug)
+    finally:
+        db.close()
+    typer.echo(f"{slug}: {'icon removed' if removed else 'had no icon'}")
+
+
 @app.command("admin-password")
 def admin_password(
     show: Annotated[

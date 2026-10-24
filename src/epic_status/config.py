@@ -88,8 +88,16 @@ class Settings(BaseSettings):
     db: Path = REPO_ROOT / "data" / "status.db"
     targets_file: Path = REPO_ROOT / "config" / "targets.toml"
 
+    icons_file: Path = REPO_ROOT / "config" / "icons.toml"
+    """Every server-icon setting: accepted types, size limits, output sizes, storage and
+    retention, upload rate limits. See `server_icons`."""
+
     site_name: str = "Epic Cash Status"
     site_url: str = "http://127.0.0.1:13431"
+    onion_url: str = ""
+    """This instance's onion address, e.g. `http://abc….onion`. When set, a request that
+    arrived over the onion (see `web.onion_request`) gets icon URLs on it rather than on
+    `site_url`, so a Tor wallet never has to leave Tor to draw a server's icon."""
     source_url: str = "https://github.com/BTLabs-EPIC/epic-status"
     """Where the footer's Source and Run-your-own links point. A fork that changes
     the code should point it at its own repository."""

@@ -24,6 +24,9 @@ dependencies = [
     "pydantic==2.13.5",
     "pydantic-settings==2.15.0",
     "typer==0.27.2",
+    # Server icons: every upload is decoded and re-encoded here, never served as sent.
+    # 12.3 rather than 13.0, which is days old; see icon_upload.
+    "pillow==12.3.0",
 ]
 
 [project.optional-dependencies]

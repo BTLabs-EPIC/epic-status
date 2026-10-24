@@ -841,6 +841,7 @@ def render_submit(
     message: str | None = None,
     error: str | None = None,
     submitted_host: str = "",
+    icon_max_kb: int = 1024,
 ) -> str:
     context = _base_context(snapshot, settings)
     context["message"] = message
@@ -849,6 +850,7 @@ def render_submit(
     context["probes_required"] = settings.submit_probes_required
     context["probe_interval_s"] = int(settings.submit_probe_interval_s)
     context["countries"] = _country_options()
+    context["icon_max_kb"] = icon_max_kb
     return _environment().get_template("submit.html").render(**context)
 
 
@@ -979,6 +981,33 @@ def render_api(*, settings: Settings) -> str:
         },
         {
             "method": "GET",
+            "path": "/api/v1/icons/{hash}-{size}.png",
+            "anchor": "icons",
+            "tag": "images",
+            "why": (
+                "A server's icon, as linked from its `icon` in status.json: a square PNG, "
+                "128 or 256 px, named by its content hash and cached for a year. Only "
+                "approved icons are served. `icon: null` means none: show the initials."
+            ),
+            "params": [],
+            "caption": "Every node that has an icon",
+            "example": (
+                f"curl -s {base}/api/v1/status.json \\\n"
+                "  | python3 -c 'import sys,json; "
+                "[print(n[\"id\"], n[\"icon\"][\"url\"]) for n in json.load(sys.stdin)"
+                "[\"nodes\"] if n[\"icon\"]]'"
+            ),
+            "returns": (
+                '"icon": {\n'
+                '  "url": "' + base + '/api/v1/icons/3f9c0a6d1b2e4c5f7a8b-256.png",\n'
+                '  "urls": { "128": ".../3f9c0a6d1b2e4c5f7a8b-128.png", "256": "..." },\n'
+                '  "hash": "3f9c0a6d1b2e4c5f7a8b",\n'
+                '  "updated_at": "2026-10-24T15:40:00Z"\n'
+                "}"
+            ),
+        },
+        {
+            "method": "GET",
             "path": "/api/v1/events.json",
             "anchor": "events",
             "tag": "incidents",
@@ -1079,13 +1108,22 @@ def render_api(*, settings: Settings) -> str:
                 {"name": "kind", "what": "node, epicbox or pool."},
                 {"name": "host", "what": "Hostname, with a port if it is not the default."},
                 {"name": "operator", "what": "Optional. Who runs it."},
+                {
+                    "name": "icon",
+                    "what": (
+                        "Optional file, as multipart/form-data. PNG, JPEG or WebP, up to "
+                        "1 MB and 2048 px, not animated; no SVG. Re-encoded here and shown "
+                        "only once approved."
+                    ),
+                },
             ],
-            "caption": "Submit a node",
+            "caption": "Submit a node, with an icon",
             "example": (
                 f"curl -X POST {base}/api/v1/submit \\\n"
-                "  -d kind=node \\\n"
-                "  -d host=node.example.org:3413 \\\n"
-                '  -d operator="Example Pool"'
+                "  -F kind=node \\\n"
+                "  -F host=node.example.org:3413 \\\n"
+                '  -F operator="Example Pool" \\\n'
+                "  -F icon=@logo.png"
             ),
             "returns": (
                 "202\n"
@@ -1138,6 +1176,10 @@ def render_admin(
     csrf: str,
     user: str,
     notice: str | None = None,
+    pending_icons: Sequence[Any] = (),
+    icons_by_submission: dict[int, Any] | None = None,
+    active_icons: dict[tuple[str, str], Any] | None = None,
+    icon_settings: Any = None,
 ) -> str:
     """The review queue.
 
@@ -1155,6 +1197,12 @@ def render_admin(
         csrf=csrf,
         user=user,
         notice=notice,
+        pending_icons=pending_icons,
+        icons_by_submission=icons_by_submission or {},
+        active_icons=active_icons or {},
+        # The preview shows the 128 px rendition, the size a wallet tile draws at 2x.
+        icon_preview_size=min(icon_settings.sizes) if icon_settings else 128,
+        icon_max_kb=(icon_settings.max_bytes // 1024) if icon_settings else 1024,
     )
     return _environment().get_template("admin.html").render(**context)
 

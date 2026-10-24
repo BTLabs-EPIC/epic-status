@@ -51,6 +51,39 @@ token for a `POST` endpoint that accepts `{"kind", "host", "received", "link"}`;
 an `EnvironmentFile` outside git. If the endpoint is down the submission still succeeds and
 the notice is retried a few times over about six minutes, then dropped and logged.
 
+### Server icons (optional)
+
+Each node, relay or pool can have an icon, which wallets draw in their server pickers.
+All of its settings are in `config/icons.toml`: accepted types (PNG, JPEG, WebP; SVG is
+refused), the upload size and pixel limits, the output sizes (128 and 256 px), the
+storage directory (`data/icons/`, outside any web root) and how long rejected files are
+kept, and the upload rate limits.
+
+Every upload is decoded and redrawn as square PNGs with no metadata; the uploaded bytes
+are never stored or served. Icons sent with a public request (the form's optional
+**Icon** field, or `-F icon=@logo.png` on `POST /api/v1/submit`) wait as *pending*
+until approved at `/admin`, under **Icons waiting**, separately from the request.
+
+At `/admin` each monitored target shows its icon on the wallet's light and dark tiles,
+with **Upload**/**Replace** and **Remove icon**. Behind the same login and CSRF token:
+
+| Route | Body (multipart) | Does |
+|---|---|---|
+| `POST /admin/api/icon` | `csrf`, `target_id`, `icon` | Set the icon; returns JSON with what status.json now publishes |
+| `POST /admin/icon` | the same | The same, for the plain form |
+| `POST /admin/icon/review` | `csrf`, `icon_id`, `decision=approve\|reject` | Decide a pending icon |
+| `POST /admin/icon/remove` | `csrf`, `target_id` | Take the icon down |
+| `GET /admin/icons/<hash>-<size>.png` | | Preview any stored icon, pending included |
+
+From a shell on the host: `uv run epic-status icon-set node node.example.org logo.png`
+and `uv run epic-status icon-remove node node.example.org`.
+
+Approved icons appear in `/api/v1/status.json` as `icon` on each target — `url` (the
+largest), `urls` by size, `hash` and `updated_at`, or `null` for none — and are served
+from `GET /api/v1/icons/<hash>-<size>.png` as `image/png` with `nosniff` and a one-year
+immutable cache. Set `EPIC_STATUS_ONION_URL` and requests arriving over the onion get
+icon URLs on the onion address. Back up `data/icons/` with `data/status.db`.
+
 ### Run
 
 ```sh
@@ -64,7 +97,7 @@ Open <http://127.0.0.1:13431>. To probe one host without starting the service:
 
 Run it under systemd behind nginx, bound to loopback. Use `ops/systemd/epic-status.service`
 and `ops/nginx/`; each file's header has its install commands. Edit the paths, user and
-`server_name` for your machine first. Back up `data/status.db`.
+`server_name` for your machine first. Back up `data/status.db` and `data/icons/`.
 
 ## Licence
 

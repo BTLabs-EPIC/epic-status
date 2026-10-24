@@ -1,0 +1,57 @@
+# Server icons — every setting for the optional picture shown beside a node, Epicbox
+# relay or pool. One file, so what the public upload accepts can be read in one place.
+#
+# Read once at boot (EPIC_STATUS_ICONS_FILE overrides the path). Restart epic-status
+# after editing. A value outside its allowed range is a startup failure, not a silent
+# clamp. Loaded by `epic_status.server_icons.load_icon_settings`.
+
+[upload]
+# Image types accepted, detected from the file's first bytes, never from its name or the
+# Content-Type the browser sent. Only these three exist: anything else is refused.
+#
+# SVG is refused, and not configurable. An SVG is a program (script, external
+# references, CSS, entity expansion); sanitising one well enough to publish it from a
+# public form is a project of its own, and a wallet tile needs a bitmap anyway.
+allowed_types = ["png", "jpeg", "webp"]
+
+# Largest upload, in bytes. nginx refuses a bigger body on the upload routes first
+# (client_max_body_size 1100k, ops/nginx/), and the application checks again.
+max_bytes = 1048576
+
+# Largest width or height, and largest width × height, read from the header *before*
+# anything is decoded. This is the decompression-bomb guard: a 1 MB PNG can claim to be
+# 50000 × 50000. 2048² RGBA is 16 MB decoded, which this service's 256 MB cgroup
+# (ops/systemd/epic-status.service) can afford; do not raise it without measuring.
+max_side = 2048
+max_pixels = 4194304
+
+# Smallest width or height. Anything smaller would be enlarged into mush.
+min_side = 32
+
+[output]
+# What every upload becomes: square PNGs at these sizes, transparent padding where the
+# original is not square, all metadata (EXIF, XMP, ICC, text chunks) dropped. Only these
+# files are ever served; the uploaded bytes are discarded after decoding.
+sizes = [128, 256]
+
+[storage]
+# Where the renditions live. Relative paths are relative to the repository root. Outside
+# any web root: nginx serves nothing from here, and the application serves a file only
+# through GET /api/v1/icons/<hash>-<size>.png, and only while it is an approved icon.
+dir = "data/icons"
+
+# Days a rejected icon's files are kept (for a second look) before they are deleted,
+# and the same for an icon that was replaced or removed. Pending icons are never pruned.
+rejected_retention_days = 14
+retired_retention_days = 30
+
+[limits]
+# Public submissions that carry an image. Counted per visitor address and across
+# everyone, on top of nginx's per-address limit. Every Tor visitor arrives from one
+# loopback address, so over the onion the per-address limit is one shared allowance.
+per_address_per_hour = 3
+global_per_hour = 20
+
+# Icons waiting for a decision. At the cap the form refuses new images (a submission
+# without one still goes through) until some are approved or rejected.
+max_pending = 50

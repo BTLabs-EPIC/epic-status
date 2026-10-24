@@ -51,6 +51,9 @@ Environment=EPIC_STATUS_SITE_URL=https://status.btlabs.uk
 # discards the remainder as two invalid assignments -- it warns and carries on, so
 # the site silently renders under its default name.
 Environment="EPIC_STATUS_SITE_NAME=Epic Cash Status"
+# The onion mirror's address (public: it is in every page footer). Server icon URLs in
+# status.json point here for requests that arrived over the onion, so Tor wallets stay on Tor.
+Environment=EPIC_STATUS_ONION_URL=http://t6furoapbsowxp3hvmjwp223zenmauwldfv2noddih7bfuuavwyvaqad.onion
 
 # Stamped on every stored check. Latency is a statement about the vantage point
 # that measured it, so a second prober in another region must be distinguishable

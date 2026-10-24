@@ -16,7 +16,7 @@
 {% endif %}
 
 {% if submissions_enabled %}
-<form class="form-grid" method="post" action="/add">
+<form class="form-grid" method="post" action="/add" enctype="multipart/form-data">
   <label class="field">
     <span>Kind</span>
     <select name="kind">
@@ -59,6 +59,18 @@
   <label class="field">
     <span>Operator <small>optional</small></span>
     <input type="text" name="operator" placeholder="Example Pool" autocomplete="off" maxlength="64" />
+  </label>
+
+  {#
+    Optional. Decoded and redrawn on the server as a square PNG, so nothing in the file but
+    its pixels is ever published, and only after an operator approves it — separately from
+    the server itself. No SVG: see config/icons.toml.
+  #}
+  <label class="field">
+    <span>Icon <small>optional</small></span>
+    <input type="file" name="icon" accept="image/png,image/jpeg,image/webp" />
+    <small class="field-note">PNG, JPEG or WebP, up to {{ icon_max_kb }} KB. Square works best.
+      Wallets show it beside your server once it is approved.</small>
   </label>
 
   <button class="btn btn-primary" type="submit">Send request</button>

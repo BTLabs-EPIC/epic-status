@@ -5016,3 +5016,72 @@ input[data-state='failed'] {
   border-radius: 6px;
   background: #fff;
 }
+
+/* ---- Server icons (admin) -------------------------------------------------------------
+   Previewed on the wallet's own two tile colours rather than this page's, because the
+   question being answered is "how will this look in the app". Fixed values on purpose: the
+   wallet's light tile does not change when this page is in dark mode. */
+.icon-tiles {
+  display: inline-flex;
+  gap: var(--sp-8);
+  flex: none;
+}
+
+.icon-tile {
+  display: inline-grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+}
+
+.icon-tile img {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  object-fit: contain;
+}
+
+.icon-tile-light {
+  background: #eeeef0;
+  color: #1a1a21;
+}
+
+.icon-tile-dark {
+  background: #1a1a21;
+  color: #fff9f9;
+}
+
+.icon-initials {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 1.1rem;
+  letter-spacing: 0.02em;
+}
+
+.req-icon {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-12);
+  margin-top: var(--sp-8);
+}
+
+.rec-icon {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--sp-12);
+  margin-top: var(--sp-12);
+}
+
+.rec-icon-form {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--sp-8);
+}
+
+.rec-icon-form input[type="file"] {
+  max-width: 100%;
+}

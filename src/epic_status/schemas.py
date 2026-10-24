@@ -58,6 +58,26 @@ class Location(BaseModel):
     source: str = Field("registry", examples=["registry"])
 
 
+class IconOut(BaseModel):
+    url: str = Field(
+        description="The largest rendition. Square PNG, transparent where the original was not square.",
+        examples=["https://status.btlabs.uk/api/v1/icons/3f9c0a6d1b2e4c5f7a8b-256.png"],
+    )
+    urls: dict[str, str] = Field(
+        description="Every rendition, keyed by its width in pixels.",
+        examples=[{
+            "128": "https://status.btlabs.uk/api/v1/icons/3f9c0a6d1b2e4c5f7a8b-128.png",
+            "256": "https://status.btlabs.uk/api/v1/icons/3f9c0a6d1b2e4c5f7a8b-256.png",
+        }],
+    )
+    hash: str = Field(
+        description="Content hash, also in the file names. A changed icon has a new hash, "
+        "so it is a safe cache key.",
+        examples=["3f9c0a6d1b2e4c5f7a8b"],
+    )
+    updated_at: str = Field(examples=["2026-10-24T15:40:00Z"])
+
+
 class TargetBase(BaseModel):
     id: str = Field(description="Stable identifier.", examples=["node.epiccash.com"])
     kind: str = Field(
@@ -127,6 +147,11 @@ class TargetBase(BaseModel):
     error_count: int = Field(0, description="Consecutive failures.", examples=[0])
     uptime: Uptime
     location: Location
+    icon: IconOut | None = Field(
+        None,
+        description="The server's icon, or null when it has none — show the host's "
+        "initials then. Only icons an operator has approved appear here.",
+    )
 
 
 class NodeStatusCall(BaseModel):
